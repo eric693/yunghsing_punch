@@ -337,7 +337,8 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
             <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="leave-end-half"   onchange="previewLeaveStaff()"> 結束日上午請假</label>
           </div>
           <div id="leave-days-preview" style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:10px;min-height:18px"></div>
-          <div id="leave-balance-info" style="font-size:12px;color:var(--muted);padding:8px 10px;background:var(--bg);border-radius:6px;margin-bottom:10px;min-height:32px"></div>
+          <div id="leave-balance-info" style="font-size:12px;color:var(--muted);padding:8px 10px;background:var(--bg);border-radius:6px;margin-bottom:6px;min-height:32px"></div>
+          <button class="btn btn-outline" style="width:100%;font-size:12px;margin-bottom:10px" onclick="showMyAnnualSchedule()">查看我的特休排程</button>
           <div style="margin-bottom:10px"><div class="fl">請假原因 *</div><input class="fi" id="leave-reason" placeholder="例：身體不適、家庭事務" style="margin-bottom:0"></div>
           <div style="margin-bottom:14px"><div class="fl">代理人（選填）</div><input class="fi" id="leave-sub" placeholder="例：王小明" style="margin-bottom:0"></div>
           <button class="btn btn-primary" style="width:100%" onclick="submitLeaveRequest()">送出請假申請</button>
@@ -682,6 +683,7 @@ async function loadScheduleView(){
   if (!month) return;
   const wrap = document.getElementById('schedule-view-content');
   wrap.innerHTML = '<div style="text-align:center;color:var(--muted);font-size:13px;padding:16px">載入中...</div>';
+  await _loadHolidaysForMonth(month);
 
   let cfgData = {vacation_quota:8,max_off_per_day:2,off_counts:{},notes:''};
   let reqData  = null;
@@ -761,6 +763,9 @@ async function loadScheduleView(){
     const offBadge = isOff
       ? `<div style="font-size:8px;font-weight:700;color:${dayColor};line-height:1.3;margin-top:1px">${offLabel[myStatus]||'休假'}</div>`
       : '';
+    const hlBadge = _holidayMap[ds] && !isOff
+      ? `<div style="font-size:8px;font-weight:700;color:var(--red);line-height:1.3;margin-top:1px">${esc(_holidayMap[ds])}</div>`
+      : '';
 
     html += `
     <div onclick="showSchedDayDetail('${ds}')"
@@ -775,6 +780,7 @@ async function loadScheduleView(){
         ${day}${isToday?'<sup style="font-size:7px;color:var(--accent)">今</sup>':''}
       </span>
       ${offBadge}
+      ${hlBadge}
       ${shiftLabel}
     </div>`;
   }
@@ -889,7 +895,38 @@ function initOTTab(){
     _otTabInited = true;
   }
   updateOTHoursPreview();
+  // Auto-detect holiday type for the selected date
+  _autoDetectOTDayType(document.getElementById('ot-date').value);
+  document.getElementById('ot-date').addEventListener('change', e => {
+    _autoDetectOTDayType(e.target.value);
+  });
   loadMyOTRequests();
+}
+
+async function _autoDetectOTDayType(dateStr) {
+  if (!dateStr) return;
+  const dt  = new Date(dateStr + 'T00:00:00');
+  const sel = document.getElementById('ot-day-type');
+  if (!sel) return;
+
+  // Weekend
+  if (dt.getDay() === 0) { sel.value = 'special'; updateOTHoursPreview(); return; }
+  if (dt.getDay() === 6) { sel.value = 'rest_day'; updateOTHoursPreview(); return; }
+
+  // Check public holiday
+  try {
+    const month = dateStr.slice(0, 7);
+    if (!_holidayMap[dateStr]) {
+      const res = await fetch('/api/holidays/public?month=' + month);
+      if (res.ok) { const d = await res.json(); Object.assign(_holidayMap, d); }
+    }
+    if (_holidayMap[dateStr]) {
+      sel.value = 'holiday'; updateOTHoursPreview();
+      showToast('已自動偵測為國定假日：' + _holidayMap[dateStr], 'ok');
+      return;
+    }
+  } catch(e) {}
+  sel.value = 'weekday'; updateOTHoursPreview();
 }
 function updateOTHoursPreview(){
   const s=document.getElementById('ot-start').value;
@@ -964,6 +1001,18 @@ function initAttendanceTab(){
   loadAttendance();
 }
 let _attRecords = {};  // cache for day detail popup
+let _holidayMap  = {};  // cache: date -> holiday name
+
+async function _loadHolidaysForMonth(month) {
+  if (!month) return;
+  try {
+    const res = await fetch('/api/holidays/public?month=' + month + '&_=' + Date.now());
+    if (res.ok) {
+      const data = await res.json();
+      Object.assign(_holidayMap, data);
+    }
+  } catch(e) {}
+}
 
 async function loadAttendance(){
   const month = document.getElementById('att-month-picker').value;
@@ -971,6 +1020,7 @@ async function loadAttendance(){
   const cal = document.getElementById('att-calendar');
   const sum = document.getElementById('att-summary');
   cal.innerHTML = '<div style="text-align:center;color:var(--muted);font-size:13px;padding:24px">載入中...</div>';
+  await _loadHolidaysForMonth(month);
 
   let records = {};
   try {
@@ -1076,6 +1126,7 @@ async function loadAttendance(){
     const dayColor = wd===0 ? 'var(--red)' : wd===6 ? 'var(--accent)' : 'var(--text)';
 
     // Show clock_in ~ clock_out times compactly
+    const holidayName = _holidayMap[ds] || '';
     const inTime  = recs.find(r => r.type === 'in')?.time   || '';
     const outTime = [...recs].reverse().find(r => r.type === 'out')?.time || '';
     const timeStr = inTime
@@ -1103,6 +1154,7 @@ async function loadAttendance(){
            color:${isToday?'var(--accent)':recs.length?'var(--navy)':dayColor}">
         ${day}${isToday?'<span style="font-size:8px;color:var(--accent)"> 今</span>':''}
       </div>
+      ${holidayName ? `<div style="font-size:8px;font-weight:700;color:var(--red);line-height:1.3;margin-top:1px;text-align:center">${esc(holidayName)}</div>` : ''}
       ${timeStr}
       ${recs.length===0 && !isFuture && wd!==0
         ? '<div style="font-size:9px;color:#d0d4de;margin-top:4px;text-align:center">—</div>'
@@ -1436,6 +1488,65 @@ function previewLeaveStaff() {
   } else {
     balInfo.innerHTML = '';
   }
+}
+
+async function showMyAnnualSchedule() {
+  try {
+    const res  = await fetch('/api/leave/annual-schedule/public');
+    if (!res.ok) { showToast('無法載入排程', 'err'); return; }
+    const data = await res.json();
+    if (!data.hire_date) {
+      showToast('尚未設定到職日，請聯絡管理員', 'err');
+      return;
+    }
+    const schedule = data.schedule || [];
+    const old = document.getElementById('annual-sched-popup-staff');
+    if (old) old.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'annual-sched-popup-staff';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(10,20,45,.55);z-index:400;display:flex;align-items:flex-end;justify-content:center';
+    overlay.onclick = e => { if(e.target===overlay) overlay.remove(); };
+    const rows = schedule.map(s => {
+      const bg     = s.is_current ? 'background:var(--navy);color:#fff;' : '';
+      const fw     = s.is_current ? 'font-weight:700;' : '';
+      const status = s.is_current ? '▶ 目前' : s.is_past ? '已達成' : '未達成';
+      const sc     = s.is_current ? '' : s.is_past ? 'color:var(--muted)' : 'color:var(--text)';
+      return `<tr style="${bg}${fw}">
+        <td style="padding:9px 14px;${sc}">${s.label}</td>
+        <td style="padding:9px 14px;font-family:'DM Mono',monospace;font-weight:700;text-align:center;${sc}">${s.days} 天</td>
+        <td style="padding:9px 14px;font-family:'DM Mono',monospace;font-size:12px;${sc}">${s.date_reached}</td>
+        <td style="padding:9px 14px;font-size:12px;${sc}">${status}</td>
+      </tr>`;
+    }).join('');
+    overlay.innerHTML = `
+    <div style="background:#fff;border-radius:16px 16px 0 0;width:100%;max-width:460px;max-height:85vh;overflow-y:auto;padding:0 0 24px">
+      <div style="padding:16px 20px 12px;border-bottom:1px solid var(--border);position:sticky;top:0;background:#fff;z-index:1">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div>
+            <div style="font-size:15px;font-weight:700;color:var(--navy)">我的特休排程</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:2px">
+              到職日：${data.hire_date}　|　目前：<strong style="color:var(--green)">${data.current_days} 天/年</strong>
+            </div>
+          </div>
+          <button onclick="document.getElementById('annual-sched-popup-staff').remove()"
+            style="width:28px;height:28px;border:none;background:var(--bg);border-radius:50%;font-size:16px;cursor:pointer">×</button>
+        </div>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:var(--bg)">
+          <th style="padding:8px 14px;text-align:left;border-bottom:1px solid var(--border)">里程碑</th>
+          <th style="padding:8px 14px;text-align:center;border-bottom:1px solid var(--border)">天數</th>
+          <th style="padding:8px 14px;text-align:left;border-bottom:1px solid var(--border)">達成日期</th>
+          <th style="padding:8px 14px;text-align:left;border-bottom:1px solid var(--border)">狀態</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div style="padding:10px 20px;font-size:11px;color:var(--muted);background:var(--bg);margin-top:8px">
+        依勞基法第38條：滿6個月3天 → 滿1年7天 → 滿2年10天 → 滿3年14天 → 滿5年15天 → 滿10年起每年+1天（上限30天）
+      </div>
+    </div>`;
+    document.body.appendChild(overlay);
+  } catch(e) { showToast('載入失敗', 'err'); }
 }
 
 async function submitLeaveRequest() {

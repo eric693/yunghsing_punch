@@ -1604,6 +1604,11 @@ def api_sched_admin_review(rid):
                 reviewed_at=NOW(), updated_at=NOW()
             WHERE id=%s RETURNING *
         """, (new_status, reviewed_by, review_note, rid)).fetchone()
+    if row:
+        dates = row['dates'] if isinstance(row['dates'], list) else _json.loads(row['dates'] or '[]')
+        extra = f"{row['month']} 排休 {len(dates)} 天"
+        if review_note: extra += f"\n審核意見：{review_note}"
+        _notify_review_result(row['staff_id'], '排休申請', action, extra)
     return jsonify(sched_req_row(row)) if row else ('', 404)
 
 
@@ -2042,6 +2047,12 @@ def api_ot_review(rid):
 
     result = ot_req_row(row)
     result['staff_name'] = sn['name'] if sn else ''
+    # LINE notification
+    extra = f"{row['request_date']} {row['start_time']}～{row['end_time']} {float(row['ot_hours'])}小時"
+    if action == 'approve' and float(row.get('ot_pay') or 0) > 0:
+        extra += f"\n加班費：${float(row['ot_pay']):,.0f}"
+    if review_note: extra += f"\n審核意見：{review_note}"
+    _notify_review_result(req['staff_id'], '加班申請', action, extra)
     return jsonify(result)
 
 
@@ -2214,22 +2225,131 @@ def leave_balance_row(row):
     if d.get('updated_at'): d['updated_at'] = d['updated_at'].isoformat()
     return d
 
-def _calc_annual_leave_days(hire_date_str):
-    """2026 勞基法特休天數計算"""
-    if not hire_date_str: return 0
+def _calc_annual_leave_days(hire_date_str, ref_date_str=None):
+    """
+    勞基法第38條特休天數計算（2017年修正版，現行有效）
+
+    到職滿6個月：3天
+    到職滿1年：7天
+    到職滿2年：10天
+    到職滿3年：14天
+    到職滿4年：14天（同第3年）
+    到職滿5年：15天
+    到職滿6～9年：15天（同第5年）
+    到職滿10年起：每年+1天，上限30天
+
+    回傳當期應給特休天數（整數）
+    """
+    if not hire_date_str:
+        return 0
     from datetime import date as _date
     try:
         hire = _date.fromisoformat(str(hire_date_str))
     except Exception:
         return 0
+
+    ref = _date.today()
+    if ref_date_str:
+        try:
+            ref = _date.fromisoformat(str(ref_date_str))
+        except Exception:
+            pass
+
+    # 計算到職滿幾個月（以完整月份計）
+    months = (ref.year - hire.year) * 12 + (ref.month - hire.month)
+    # 若當月日期未到到職日，扣一個月
+    if ref.day < hire.day:
+        months -= 1
+    if months < 0:
+        months = 0
+
+    # 正確換算年數（以整月為準）
+    years_complete = months // 12
+    months_extra   = months % 12
+
+    # 勞基法第38條逐段對應
+    if months < 6:
+        return 0
+    elif months < 12:
+        # 滿6個月未滿1年：3天
+        return 3
+    elif years_complete < 2:
+        # 滿1年未滿2年：7天
+        return 7
+    elif years_complete < 3:
+        # 滿2年未滿3年：10天
+        return 10
+    elif years_complete < 5:
+        # 滿3年未滿5年：14天
+        return 14
+    elif years_complete < 10:
+        # 滿5年未滿10年：15天
+        return 15
+    else:
+        # 滿10年：16天，之後每年+1，上限30天
+        # years_complete=10 → extra=1 → 15+1=16 ✓
+        extra = years_complete - 9
+        return min(15 + extra, 30)
+
+
+def _calc_annual_leave_schedule(hire_date_str):
+    """
+    回傳員工特休天數完整排程表，供前端顯示用。
+    每一列：{ label, days, date_reached, is_past, is_current }
+    """
+    if not hire_date_str:
+        return []
+    from datetime import date as _date
+    import calendar as _cal
+
+    try:
+        hire = _date.fromisoformat(str(hire_date_str))
+    except Exception:
+        return []
+
     today = _date.today()
-    years = (today - hire).days / 365.25
-    if years < 1:   return 0
-    if years < 2:   return 10
-    if years < 3:   return 15
-    if years < 4:   return 16
-    if years < 5:   return 17
-    return 20  # 滿5年上限20天
+
+    milestones = [
+        (6,   3,  '滿6個月'),
+        (12,  7,  '滿1年'),
+        (24, 10,  '滿2年'),
+        (36, 14,  '滿3年'),
+        (60, 15,  '滿5年'),
+        (120,16,  '滿10年'),
+        (132,17,  '滿11年'),
+        (144,18,  '滿12年'),
+        (156,19,  '滿13年'),
+        (168,20,  '滿14年'),
+        (180,21,  '滿15年'),
+        (192,22,  '滿16年'),
+        (204,23,  '滿17年'),
+        (216,24,  '滿18年'),
+        (228,25,  '滿19年'),
+        (240,30,  '滿20年（上限30天）'),
+    ]
+
+    result      = []
+    current_days = _calc_annual_leave_days(hire_date_str)
+
+    for months_needed, days, label in milestones:
+        total_m = hire.month + months_needed
+        y = hire.year + (total_m - 1) // 12
+        m = (total_m - 1) % 12 + 1
+        max_day = _cal.monthrange(y, m)[1]
+        try:
+            reached = _date(y, m, min(hire.day, max_day))
+        except Exception:
+            continue
+
+        result.append({
+            'label':        label,
+            'days':         days,
+            'date_reached': reached.isoformat(),
+            'is_past':      reached <= today,
+            'is_current':   (days == current_days and reached <= today),
+        })
+
+    return result
 
 def _calc_leave_days(start_date_str, end_date_str, start_half=False, end_half=False):
     """計算請假天數（含半天選項），排除週日"""
@@ -2392,6 +2512,10 @@ def api_leave_request_review(rid):
         if action == 'approve':
             _update_leave_balance(conn, old['staff_id'], old['leave_type_id'],
                                   str(old['start_date'])[:4], float(old['total_days']))
+    if row:
+        extra = f"{str(old['start_date'])} ~ {str(old['end_date'])} 共 {float(old['total_days'])} 天"
+        if review_note: extra += f"\n審核意見：{review_note}"
+        _notify_review_result(old['staff_id'], '請假申請', action, extra)
     return jsonify(leave_req_row(row)) if row else ('', 404)
 
 @app.route('/api/leave/requests/<int:rid>', methods=['DELETE'])
@@ -2483,10 +2607,17 @@ def api_leave_submit():
 # ── Leave Balance ─────────────────────────────────────────────────
 
 @app.route('/api/leave/balances', methods=['GET'])
-@login_required
 def api_leave_balances():
+    """管理員和員工都可以查詢，員工只能查自己的"""
     year     = request.args.get('year', '')
     staff_id = request.args.get('staff_id', '')
+
+    # 員工端：只能查自己
+    if not session.get('logged_in'):
+        sid = session.get('punch_staff_id')
+        if not sid:
+            return jsonify({'error': 'not logged in'}), 401
+        staff_id = str(sid)   # 強制只查自己
     if not year:
         from datetime import date as _d2
         year = str(_d2.today().year)
@@ -2516,31 +2647,84 @@ def api_leave_balances():
 @app.route('/api/leave/balances/init', methods=['POST'])
 @login_required
 def api_leave_balance_init():
-    """初始化/更新員工特休天數（依年資自動計算）"""
+    """初始化/更新員工特休天數（依勞基法第38條，以到職日精確計算）"""
     b    = request.get_json(force=True)
     year = b.get('year', '')
     if not year:
         from datetime import date as _d3
         year = str(_d3.today().year)
+
     with get_db() as conn:
         staff_list = conn.execute(
-            "SELECT id, hire_date FROM punch_staff WHERE active=TRUE"
+            "SELECT id, name, hire_date FROM punch_staff WHERE active=TRUE"
         ).fetchall()
         lt = conn.execute("SELECT id FROM leave_types WHERE code='annual'").fetchone()
         if not lt: return jsonify({'error': '找不到特休假類型'}), 404
-        lt_id = lt['id']
+        lt_id   = lt['id']
         updated = 0
+        details = []
+
         for s in staff_list:
             days = _calc_annual_leave_days(s['hire_date'])
-            if days > 0:
-                conn.execute("""
-                    INSERT INTO leave_balances (staff_id, leave_type_id, year, total_days, used_days)
-                    VALUES (%s,%s,%s,%s,0)
-                    ON CONFLICT (staff_id, leave_type_id, year) DO UPDATE
-                      SET total_days=EXCLUDED.total_days, updated_at=NOW()
-                """, (s['id'], lt_id, int(year), days))
-                updated += 1
-    return jsonify({'ok': True, 'updated': updated, 'year': year})
+            # 未滿6個月的員工也記錄（0天），方便後續追蹤
+            conn.execute("""
+                INSERT INTO leave_balances (staff_id, leave_type_id, year, total_days, used_days)
+                VALUES (%s,%s,%s,%s,0)
+                ON CONFLICT (staff_id, leave_type_id, year) DO UPDATE
+                  SET total_days=EXCLUDED.total_days, updated_at=NOW()
+            """, (s['id'], lt_id, int(year), days))
+            updated += 1
+            details.append({
+                'name':      s['name'],
+                'hire_date': str(s['hire_date']) if s['hire_date'] else None,
+                'days':      days,
+            })
+
+    return jsonify({'ok': True, 'updated': updated, 'year': year, 'details': details})
+
+
+@app.route('/api/leave/annual-schedule/<int:staff_id>', methods=['GET'])
+@login_required
+def api_annual_leave_schedule(staff_id):
+    """回傳員工特休天數完整排程（各里程碑日期與天數）"""
+    with get_db() as conn:
+        staff = conn.execute(
+            "SELECT name, hire_date FROM punch_staff WHERE id=%s", (staff_id,)
+        ).fetchone()
+    if not staff:
+        return ('', 404)
+    schedule = _calc_annual_leave_schedule(staff['hire_date'])
+    current  = _calc_annual_leave_days(staff['hire_date'])
+    return jsonify({
+        'staff_id':      staff_id,
+        'name':          staff['name'],
+        'hire_date':     str(staff['hire_date']) if staff['hire_date'] else None,
+        'current_days':  current,
+        'schedule':      schedule,
+    })
+
+
+@app.route('/api/leave/annual-schedule/public', methods=['GET'])
+def api_annual_leave_schedule_public():
+    """員工查看自己的特休排程"""
+    sid = session.get('punch_staff_id')
+    if not sid:
+        return jsonify({'error': 'not logged in'}), 401
+    with get_db() as conn:
+        staff = conn.execute(
+            "SELECT name, hire_date FROM punch_staff WHERE id=%s", (sid,)
+        ).fetchone()
+    if not staff:
+        return ('', 404)
+    schedule = _calc_annual_leave_schedule(staff['hire_date'])
+    current  = _calc_annual_leave_days(staff['hire_date'])
+    return jsonify({
+        'name':         staff['name'],
+        'hire_date':    str(staff['hire_date']) if staff['hire_date'] else None,
+        'current_days': current,
+        'schedule':     schedule,
+    })
+
 
 @app.route('/api/leave/balances/<int:bid>', methods=['PUT'])
 @login_required
@@ -3172,6 +3356,9 @@ def api_salary_confirm(rid):
               confirmed_at=NOW(), updated_at=NOW()
             WHERE id=%s RETURNING *
         """, (b.get('confirmed_by','管理員'), rid)).fetchone()
+    if row:
+        extra = f"{row['month']} 薪資已確認\n實領金額：${float(row['net_pay'] or 0):,.0f}"
+        _notify_review_result(row['staff_id'], '薪資', 'confirmed', extra)
     return jsonify(salary_record_row(row)) if row else ('', 404)
 
 @app.route('/api/salary/records/<int:rid>', methods=['DELETE'])
@@ -3368,6 +3555,507 @@ def api_ann_view(aid):
             "UPDATE announcements SET view_count = view_count + 1 WHERE id=%s", (aid,)
         )
     return jsonify({'ok': True})
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Feature 1: Taiwan Public Holidays (國定假日)
+# ═══════════════════════════════════════════════════════════════════
+
+def init_holiday_db():
+    try:
+        with get_db() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS public_holidays (
+                    id          SERIAL PRIMARY KEY,
+                    date        DATE NOT NULL UNIQUE,
+                    name        TEXT NOT NULL,
+                    holiday_type TEXT DEFAULT 'national',
+                    note        TEXT DEFAULT '',
+                    created_at  TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+        # Seed 2025 & 2026 Taiwan holidays
+        _seed_holidays()
+    except Exception as e:
+        print(f"[holiday_init] {e}")
+
+def _seed_holidays():
+    """台灣2025-2026國定假日"""
+    holidays_2025 = [
+        ('2025-01-01', '元旦'),
+        ('2025-01-27', '農曆除夕'),
+        ('2025-01-28', '春節'),
+        ('2025-01-29', '春節'),
+        ('2025-01-30', '春節'),
+        ('2025-01-31', '春節補假'),
+        ('2025-02-28', '和平紀念日'),
+        ('2025-04-03', '兒童節補假'),
+        ('2025-04-04', '兒童節/清明節'),
+        ('2025-05-01', '勞動節'),
+        ('2025-05-30', '端午節補假'),
+        ('2025-06-02', '端午節'),
+        ('2025-10-06', '中秋節補假'),
+        ('2025-10-07', '中秋節'),
+        ('2025-10-10', '國慶日'),
+    ]
+    holidays_2026 = [
+        ('2026-01-01', '元旦'),
+        ('2026-01-28', '農曆除夕'),
+        ('2026-01-29', '春節'),
+        ('2026-01-30', '春節'),
+        ('2026-01-31', '春節'),
+        ('2026-02-02', '春節補假'),
+        ('2026-02-28', '和平紀念日'),
+        ('2026-03-02', '和平紀念日補假'),
+        ('2026-04-03', '兒童節'),
+        ('2026-04-04', '清明節'),
+        ('2026-04-05', '清明節補假'),
+        ('2026-05-01', '勞動節'),
+        ('2026-06-19', '端午節'),
+        ('2026-09-25', '中秋節'),
+        ('2026-10-09', '國慶日補假'),
+        ('2026-10-10', '國慶日'),
+    ]
+    all_holidays = holidays_2025 + holidays_2026
+    try:
+        with get_db() as conn:
+            existing = conn.execute("SELECT COUNT(*) as c FROM public_holidays").fetchone()['c']
+            if existing == 0:
+                for date_str, name in all_holidays:
+                    try:
+                        conn.execute(
+                            "INSERT INTO public_holidays (date, name) VALUES (%s,%s) ON CONFLICT (date) DO NOTHING",
+                            (date_str, name)
+                        )
+                    except Exception:
+                        pass
+    except Exception as e:
+        print(f"[holiday_seed] {e}")
+
+init_holiday_db()
+
+def holiday_row(row):
+    if not row: return None
+    d = dict(row)
+    if d.get('date'):       d['date']       = d['date'].isoformat()
+    if d.get('created_at'): d['created_at'] = d['created_at'].isoformat()
+    return d
+
+def _is_holiday(conn, date_str):
+    """Check if a date is a public holiday"""
+    row = conn.execute(
+        "SELECT id FROM public_holidays WHERE date=%s", (date_str,)
+    ).fetchone()
+    return row is not None
+
+# ── Holiday CRUD API ─────────────────────────────────────────────
+
+@app.route('/api/holidays', methods=['GET'])
+@login_required
+def api_holidays_list():
+    year = request.args.get('year', '')
+    conds, params = ['TRUE'], []
+    if year:
+        conds.append("EXTRACT(YEAR FROM date)=%s")
+        params.append(int(year))
+    with get_db() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM public_holidays WHERE {' AND '.join(conds)} ORDER BY date",
+            params
+        ).fetchall()
+    return jsonify([holiday_row(r) for r in rows])
+
+@app.route('/api/holidays/public', methods=['GET'])
+def api_holidays_public():
+    """Public endpoint for staff page"""
+    year = request.args.get('year', '')
+    month = request.args.get('month', '')
+    conds, params = ['TRUE'], []
+    if year:
+        conds.append("EXTRACT(YEAR FROM date)=%s"); params.append(int(year))
+    if month:
+        conds.append("to_char(date,'YYYY-MM')=%s"); params.append(month)
+    with get_db() as conn:
+        rows = conn.execute(
+            f"SELECT date, name FROM public_holidays WHERE {' AND '.join(conds)} ORDER BY date",
+            params
+        ).fetchall()
+    return jsonify({r['date'].isoformat(): r['name'] for r in rows})
+
+@app.route('/api/holidays', methods=['POST'])
+@login_required
+def api_holiday_create():
+    b = request.get_json(force=True)
+    if not b.get('date') or not b.get('name','').strip():
+        return jsonify({'error': '請填寫日期和名稱'}), 400
+    with get_db() as conn:
+        row = conn.execute("""
+            INSERT INTO public_holidays (date, name, holiday_type, note)
+            VALUES (%s,%s,%s,%s)
+            ON CONFLICT (date) DO UPDATE
+              SET name=EXCLUDED.name, holiday_type=EXCLUDED.holiday_type, note=EXCLUDED.note
+            RETURNING *
+        """, (b['date'], b['name'].strip(),
+              b.get('holiday_type','national'), b.get('note',''))).fetchone()
+    return jsonify(holiday_row(row)), 201
+
+@app.route('/api/holidays/<int:hid>', methods=['DELETE'])
+@login_required
+def api_holiday_delete(hid):
+    with get_db() as conn:
+        conn.execute("DELETE FROM public_holidays WHERE id=%s", (hid,))
+    return jsonify({'deleted': hid})
+
+@app.route('/api/holidays/batch', methods=['POST'])
+@login_required
+def api_holiday_batch():
+    """Batch import holidays from JSON list"""
+    b    = request.get_json(force=True)
+    rows = b.get('holidays', [])
+    count = 0
+    with get_db() as conn:
+        for item in rows:
+            try:
+                conn.execute("""
+                    INSERT INTO public_holidays (date, name, holiday_type, note)
+                    VALUES (%s,%s,%s,%s)
+                    ON CONFLICT (date) DO UPDATE SET name=EXCLUDED.name
+                """, (item['date'], item['name'],
+                      item.get('holiday_type','national'), item.get('note','')))
+                count += 1
+            except Exception:
+                pass
+    return jsonify({'imported': count})
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Feature 2: LINE Notification Helper
+# ═══════════════════════════════════════════════════════════════════
+
+def _notify_staff_line(staff_id, message):
+    """
+    Send LINE notification to a staff member if they have LINE bound.
+    Uses the line_punch_config token (same LINE OA).
+    """
+    if not DATABASE_URL:
+        return
+    try:
+        with get_db() as conn:
+            staff = conn.execute(
+                "SELECT line_user_id FROM punch_staff WHERE id=%s", (staff_id,)
+            ).fetchone()
+            if not staff or not staff['line_user_id']:
+                return
+            cfg = conn.execute(
+                "SELECT * FROM line_punch_config WHERE id=1"
+            ).fetchone()
+        if not cfg or not cfg.get('enabled') or not cfg.get('channel_access_token'):
+            return
+        LineBotApi(cfg['channel_access_token']).push_message(
+            staff['line_user_id'],
+            TextSendMessage(text=message)
+        )
+    except Exception as e:
+        print(f"[LINE notify] staff_id={staff_id}: {e}")
+
+
+def _notify_review_result(staff_id, category, action, extra_info=''):
+    """
+    Send a formatted LINE notification for review results.
+    category: '補打卡申請', '排休申請', '加班申請', '請假申請', '薪資確認'
+    action:   'approved', 'rejected', 'confirmed'
+    """
+    ACTION_LABEL = {'approved': '核准', 'rejected': '退回', 'confirmed': '確認'}
+    ACTION_ICON  = {'approved': '[核准]', 'rejected': '[退回]', 'confirmed': '[確認]'}
+    label = ACTION_LABEL.get(action, action)
+    icon  = ACTION_ICON.get(action, '')
+    msg   = f"{icon} {category}{label}\n{extra_info}\n\n請至員工系統查看詳情。"
+    _notify_staff_line(staff_id, msg.strip())
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Feature 3: Export Reports (出勤/薪資報表匯出)
+# ═══════════════════════════════════════════════════════════════════
+
+import csv
+import io
+
+@app.route('/api/export/attendance', methods=['GET'])
+@login_required
+def api_export_attendance():
+    """匯出月度出勤明細 CSV"""
+    month    = request.args.get('month', '')
+    staff_id = request.args.get('staff_id', '')
+    if not month:
+        from datetime import date as _de
+        month = _de.today().strftime('%Y-%m')
+
+    conds, params = ["TO_CHAR(pr.punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s"], [month]
+    if staff_id:
+        conds.append("pr.staff_id=%s"); params.append(int(staff_id))
+
+    with get_db() as conn:
+        rows = conn.execute(f"""
+            SELECT
+                ps.employee_code,
+                ps.name as staff_name,
+                ps.department,
+                ps.role,
+                (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date as work_date,
+                pr.punch_type,
+                to_char(pr.punched_at AT TIME ZONE 'Asia/Taipei', 'HH24:MI') as punch_time,
+                pr.is_manual,
+                pr.manual_by,
+                pr.gps_distance,
+                pr.location_name,
+                pr.note
+            FROM punch_records pr
+            JOIN punch_staff ps ON ps.id = pr.staff_id
+            WHERE {' AND '.join(conds)}
+            ORDER BY ps.name, pr.punched_at
+        """, params).fetchall()
+
+    PUNCH_LABEL = {'in':'上班打卡','out':'下班打卡','break_out':'休息開始','break_in':'休息結束'}
+
+    output = io.StringIO()
+    output.write('\ufeff')  # UTF-8 BOM for Excel
+    writer = csv.writer(output)
+    writer.writerow(['員工代碼','姓名','部門','職稱','日期','打卡類型','時間','補打卡','操作人','GPS距離(m)','地點','備註'])
+
+    for r in rows:
+        writer.writerow([
+            r['employee_code'] or '',
+            r['staff_name'],
+            r['department']    or '',
+            r['role']          or '',
+            str(r['work_date']),
+            PUNCH_LABEL.get(r['punch_type'], r['punch_type']),
+            r['punch_time'],
+            '是' if r['is_manual'] else '',
+            r['manual_by']     or '',
+            r['gps_distance']  if r['gps_distance'] is not None else '',
+            r['location_name'] or '',
+            r['note']          or '',
+        ])
+
+    csv_content = output.getvalue()
+    from flask import Response
+    return Response(
+        csv_content.encode('utf-8-sig'),
+        mimetype='text/csv; charset=utf-8',
+        headers={'Content-Disposition': f'attachment; filename=attendance_{month}.csv'}
+    )
+
+
+@app.route('/api/export/attendance-summary', methods=['GET'])
+@login_required
+def api_export_attendance_summary():
+    """匯出月度出勤摘要 CSV（每人每天工時）"""
+    month = request.args.get('month', '')
+    if not month:
+        from datetime import date as _df
+        month = _df.today().strftime('%Y-%m')
+
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT
+                ps.employee_code,
+                ps.name,
+                ps.department,
+                ps.role,
+                (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date as work_date,
+                MIN(CASE WHEN pr.punch_type='in'  THEN to_char(pr.punched_at AT TIME ZONE 'Asia/Taipei','HH24:MI') END) as clock_in,
+                MAX(CASE WHEN pr.punch_type='out' THEN to_char(pr.punched_at AT TIME ZONE 'Asia/Taipei','HH24:MI') END) as clock_out,
+                MIN(CASE WHEN pr.punch_type='in'  THEN pr.punched_at AT TIME ZONE 'Asia/Taipei' END) as ci_ts,
+                MAX(CASE WHEN pr.punch_type='out' THEN pr.punched_at AT TIME ZONE 'Asia/Taipei' END) as co_ts,
+                BOOL_OR(pr.is_manual) as has_manual,
+                COUNT(*) as punch_count
+            FROM punch_records pr
+            JOIN punch_staff ps ON ps.id = pr.staff_id
+            WHERE TO_CHAR(pr.punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s
+            GROUP BY ps.employee_code, ps.name, ps.department, ps.role,
+                     (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date
+            ORDER BY ps.name, (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date
+        """, (month,)).fetchall()
+
+    output = io.StringIO()
+    output.write('\ufeff')
+    writer = csv.writer(output)
+    writer.writerow(['員工代碼','姓名','部門','職稱','日期','上班','下班','工時(h)','打卡次數','含補打'])
+
+    for r in rows:
+        dur_h = ''
+        if r['ci_ts'] and r['co_ts']:
+            from datetime import datetime as _dtx
+            try:
+                ci = r['ci_ts'] if hasattr(r['ci_ts'], 'timestamp') else _dtx.fromisoformat(str(r['ci_ts']))
+                co = r['co_ts'] if hasattr(r['co_ts'], 'timestamp') else _dtx.fromisoformat(str(r['co_ts']))
+                dur_h = round((co - ci).total_seconds() / 3600, 2)
+            except Exception:
+                pass
+        writer.writerow([
+            r['employee_code'] or '',
+            r['name'], r['department'] or '', r['role'] or '',
+            str(r['work_date']),
+            r['clock_in'] or '', r['clock_out'] or '',
+            dur_h,
+            r['punch_count'],
+            '是' if r['has_manual'] else '',
+        ])
+
+    from flask import Response
+    return Response(
+        output.getvalue().encode('utf-8-sig'),
+        mimetype='text/csv; charset=utf-8',
+        headers={'Content-Disposition': f'attachment; filename=attendance_summary_{month}.csv'}
+    )
+
+
+@app.route('/api/export/salary', methods=['GET'])
+@login_required
+def api_export_salary():
+    """匯出月度薪資明細 CSV"""
+    month = request.args.get('month', '')
+    if not month:
+        from datetime import date as _dg
+        month = _dg.today().strftime('%Y-%m')
+
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT sr.*, ps.name as staff_name, ps.employee_code,
+                   ps.department, ps.role, ps.salary_type
+            FROM salary_records sr
+            JOIN punch_staff ps ON ps.id = sr.staff_id
+            WHERE sr.month = %s
+            ORDER BY ps.name
+        """, (month,)).fetchall()
+
+    output = io.StringIO()
+    output.write('\ufeff')
+    writer = csv.writer(output)
+    writer.writerow([
+        '員工代碼','姓名','部門','職稱','薪資制度',
+        '工作日','出勤天數','請假天數','無薪假天數',
+        '津貼合計','扣除合計','加班費','實領金額','狀態','備註'
+    ])
+
+    for r in rows:
+        items = r['items'] if isinstance(r['items'], list) else _json.loads(r['items'] or '[]')
+        sal_type = r['salary_type'] or 'monthly'
+        writer.writerow([
+            r['employee_code'] or '', r['staff_name'],
+            r['department'] or '', r['role'] or '',
+            '時薪制' if sal_type == 'hourly' else '月薪制',
+            float(r['work_days'] or 0), float(r['actual_days'] or 0),
+            float(r['leave_days'] or 0), float(r['unpaid_days'] or 0),
+            float(r['allowance_total'] or 0), float(r['deduction_total'] or 0),
+            float(r['ot_pay'] or 0), float(r['net_pay'] or 0),
+            '已確認' if r['status'] == 'confirmed' else '草稿',
+            r['note'] or '',
+        ])
+
+    from flask import Response
+    return Response(
+        output.getvalue().encode('utf-8-sig'),
+        mimetype='text/csv; charset=utf-8',
+        headers={'Content-Disposition': f'attachment; filename=salary_{month}.csv'}
+    )
+
+
+@app.route('/api/export/leave', methods=['GET'])
+@login_required
+def api_export_leave():
+    """匯出請假記錄 CSV"""
+    month    = request.args.get('month', '')
+    year     = request.args.get('year',  '')
+    staff_id = request.args.get('staff_id', '')
+
+    conds, params = ['lr.status=%s'], ['approved']
+    if month: conds.append("to_char(lr.start_date,'YYYY-MM')=%s"); params.append(month)
+    if year:  conds.append("EXTRACT(YEAR FROM lr.start_date)=%s"); params.append(int(year))
+    if staff_id: conds.append("lr.staff_id=%s"); params.append(int(staff_id))
+
+    with get_db() as conn:
+        rows = conn.execute(f"""
+            SELECT lr.*, ps.name as staff_name, ps.employee_code,
+                   ps.department, lt.name as leave_type_name, lt.pay_rate
+            FROM leave_requests lr
+            JOIN punch_staff ps ON ps.id = lr.staff_id
+            JOIN leave_types  lt ON lt.id = lr.leave_type_id
+            WHERE {' AND '.join(conds)}
+            ORDER BY lr.start_date, ps.name
+        """, params).fetchall()
+
+    output = io.StringIO()
+    output.write('\ufeff')
+    writer = csv.writer(output)
+    writer.writerow(['員工代碼','姓名','部門','假別','薪資倍率','開始日期','結束日期','天數','原因','代理人','狀態'])
+
+    PAY_LABEL = {1.0:'全薪', 0.5:'半薪', 0.0:'無薪'}
+    for r in rows:
+        writer.writerow([
+            r['employee_code'] or '', r['staff_name'], r['department'] or '',
+            r['leave_type_name'], PAY_LABEL.get(float(r['pay_rate']), f"{r['pay_rate']}倍"),
+            str(r['start_date']), str(r['end_date']),
+            float(r['total_days']),
+            r['reason'] or '', r['substitute_name'] or '',
+            {'approved':'已核准','rejected':'已退回','pending':'待審核'}.get(r['status'], r['status']),
+        ])
+
+    from flask import Response
+    return Response(
+        output.getvalue().encode('utf-8-sig'),
+        mimetype='text/csv; charset=utf-8',
+        headers={'Content-Disposition': f'attachment; filename=leave_{month or year or "all"}.csv'}
+    )
+
+
+# ── Patch existing review functions with LINE notifications ──────
+
+def _patch_reviews_with_notifications():
+    """
+    This is called after all route functions are defined.
+    We monkey-patch the review endpoints to send LINE notifications.
+    The actual patching is done inline in the route handlers below
+    via the _notify_review_result helper.
+    """
+    pass
+
+# Override punch request review to add LINE notification
+_orig_punch_req_review = app.view_functions.get('api_punch_req_review')
+
+@app.route('/api/punch/requests/<int:rid>', methods=['PUT'])
+@login_required
+def api_punch_req_review_v2(rid):
+    b           = request.get_json(force=True)
+    action      = b.get('action')
+    reviewed_by = b.get('reviewed_by', '').strip()
+    review_note = b.get('review_note', '').strip()
+    if action not in ('approve', 'reject'):
+        return jsonify({'error': 'invalid action'}), 400
+    new_status = 'approved' if action == 'approve' else 'rejected'
+    with get_db() as conn:
+        row = conn.execute("""
+            UPDATE punch_requests
+            SET status=%s, reviewed_by=%s, review_note=%s, reviewed_at=NOW()
+            WHERE id=%s
+            RETURNING *, (SELECT name FROM punch_staff WHERE id=staff_id) as staff_name
+        """, (new_status, reviewed_by, review_note, rid)).fetchone()
+        if not row: return ('', 404)
+        if action == 'approve':
+            conn.execute("""
+                INSERT INTO punch_records
+                  (staff_id, punch_type, punched_at, note, is_manual, manual_by)
+                VALUES (%s,%s,%s,%s,TRUE,%s)
+            """, (row['staff_id'], row['punch_type'], row['requested_at'],
+                  f'補打卡申請 #{rid}：{row["reason"]}', reviewed_by))
+    # LINE notification
+    LABEL = {'in':'上班打卡','out':'下班打卡','break_out':'休息開始','break_in':'休息結束'}
+    dt_str = row['requested_at'].isoformat()[:16].replace('T',' ')
+    extra  = f"{LABEL.get(row['punch_type'],'')} {dt_str}"
+    if review_note: extra += f"\n審核意見：{review_note}"
+    _notify_review_result(row['staff_id'], '補打卡申請', action, extra)
+    return jsonify(punch_req_row(row))
 
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────

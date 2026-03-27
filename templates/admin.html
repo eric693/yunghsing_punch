@@ -200,6 +200,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     <a href="#" class="nav-item"        id="nav-leave"  onclick="showPage('leave',event)">請假管理<span class="nav-badge" id="badge-leave" style="display:none"></span></a>
     <a href="#" class="nav-item"        id="nav-salary" onclick="showPage('salary',event)">薪資管理</a>
     <a href="#" class="nav-item"        id="nav-ann"    onclick="showPage('ann',event)">公告管理</a>
+    <a href="#" class="nav-item"        id="nav-holiday" onclick="showPage('holiday',event)">國定假日</a>
   </nav>
   <div class="sidebar-bottom">
     <a href="/admin/logout" class="logout-btn">登出系統</a>
@@ -236,7 +237,9 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <span class="filter-label">月份</span>
         <input class="filter-input" type="month" id="sum-month" onchange="loadPunchSummary()">
         <span style="flex:1"></span>
-        <a href="/staff" target="_blank" class="btn btn-primary btn-sm">員工系統</a>
+        <a href="/staff" target="_blank" class="btn btn-outline btn-sm">員工系統</a>
+        <button class="btn btn-primary btn-sm" onclick="exportAttSummary()">匯出摘要 CSV</button>
+        <button class="btn btn-ghost btn-sm" onclick="exportAttDetail()">匯出明細 CSV</button>
       </div>
       <div class="card">
         <div class="table-wrap">
@@ -615,6 +618,8 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <span class="filter-label">月份</span>
         <input class="filter-input" type="month" id="sal-month" onchange="loadSalaryRecords()">
         <button class="btn btn-primary btn-sm" onclick="generateSalary()">自動產生薪資</button>
+        <button class="btn btn-outline btn-sm" onclick="exportSalaryCSV()">匯出 CSV</button>
+        <button class="btn btn-ghost btn-sm" onclick="exportLeaveCSV()">匯出請假 CSV</button>
         <span style="flex:1"></span>
         <span id="sal-count" style="font-size:12px;color:var(--muted)"></span>
       </div>
@@ -700,6 +705,47 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
       <div class="empty-state"><div class="empty-state-text">載入中...</div></div>
     </div>
   </div><!-- end page-ann -->
+  <!-- ── 國定假日 ── -->
+  <div class="page" id="page-holiday" style="display:none">
+    <div class="filter-bar" style="margin-bottom:20px;gap:12px;flex-wrap:wrap">
+      <span class="filter-label">年度</span>
+      <select class="filter-input" id="holiday-year" onchange="loadHolidays()" style="min-width:100px"></select>
+      <button class="btn btn-outline btn-sm" onclick="loadHolidays()">重新整理</button>
+      <span style="flex:1"></span>
+      <button class="btn btn-primary" onclick="openHolidayModal()">新增假日</button>
+      <button class="btn btn-outline btn-sm" onclick="importDefaultHolidays()">匯入台灣預設假日</button>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start">
+      <div class="card">
+        <div class="card-header"><span class="card-title">國定假日清單</span><span id="holiday-count" style="font-size:12px;color:var(--muted)"></span></div>
+        <div class="table-wrap" style="max-height:520px;overflow-y:auto">
+          <table>
+            <thead><tr><th>日期</th><th>星期</th><th>名稱</th><th>類型</th><th>操作</th></tr></thead>
+            <tbody id="holiday-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div>
+        <div class="card" style="padding:18px 20px;margin-bottom:14px">
+          <div class="card-title" style="padding:0;margin-bottom:12px">假日影響說明</div>
+          <div style="font-size:12px;color:var(--muted);line-height:2.2">
+            <div><strong style="color:var(--navy)">薪資計算</strong><br>國定假日加班費率 × 2.0 倍（全薪）</div>
+            <div style="margin-top:8px"><strong style="color:var(--navy)">排班顯示</strong><br>月曆上國定假日自動標記紅色邊框</div>
+            <div style="margin-top:8px"><strong style="color:var(--navy)">加班申請</strong><br>員工申請時自動偵測日期類型</div>
+            <div style="margin-top:8px"><strong style="color:var(--navy)">出勤報表</strong><br>匯出 CSV 時標記假日欄位</div>
+          </div>
+        </div>
+        <div class="card" style="padding:18px 20px">
+          <div class="card-title" style="padding:0;margin-bottom:10px">批次匯入</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:10px">貼上 JSON 格式批次新增假日</div>
+          <textarea class="form-input" id="holiday-batch-json" rows="6" style="width:100%;font-family:'DM Mono',monospace;font-size:11px;resize:vertical"
+            placeholder='[{"date":"2026-01-01","name":"元旦"},{"date":"2026-02-17","name":"春節"}]'></textarea>
+          <button class="btn btn-primary" style="width:100%;margin-top:10px" onclick="importHolidayJSON()">批次匯入</button>
+        </div>
+      </div>
+    </div>
+  </div><!-- end page-holiday -->
+
 
 </main>
 
@@ -857,6 +903,34 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
   </div>
 </div>
 
+
+<!-- Holiday Modal -->
+<div class="modal-overlay" id="holiday-modal" style="display:none">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-header">
+      <span class="modal-title" id="hm-title">新增國定假日</span>
+      <button class="modal-close" onclick="closeHolidayModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="hm-id">
+      <div style="margin-bottom:12px"><label class="form-label">日期 *</label><input class="form-input" type="date" id="hm-date" style="width:100%"></div>
+      <div style="margin-bottom:12px"><label class="form-label">名稱 *</label><input class="form-input" id="hm-name" placeholder="例：國慶日" style="width:100%"></div>
+      <div style="margin-bottom:12px">
+        <label class="form-label">類型</label>
+        <select class="form-input" id="hm-type" style="width:100%">
+          <option value="national">國定假日（加班×2）</option>
+          <option value="special">例假日（加班×2）</option>
+          <option value="makeup">補班日</option>
+        </select>
+      </div>
+      <div><label class="form-label">備註</label><input class="form-input" id="hm-note" style="width:100%"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeHolidayModal()">取消</button>
+      <button class="btn btn-primary" onclick="saveHoliday()">儲存</button>
+    </div>
+  </div>
+</div>
 
 <!-- Announcement Modal -->
 <div class="modal-overlay" id="ann-modal" style="display:none">
@@ -1097,16 +1171,17 @@ function showPage(page, e) {
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
   document.getElementById('nav-' + page).classList.add('active');
   setTimeout(refreshBadges, 600);
-  ['punch','sched','leave','salary','ann'].forEach(p =>
+  ['punch','sched','leave','salary','ann','holiday'].forEach(p =>
     document.getElementById('page-' + p).style.display = p === page ? '' : 'none'
   );
   document.getElementById('page-title').textContent =
-    { punch: '打卡管理', sched: '排班管理', leave: '請假管理', salary: '薪資管理', ann: '公告管理' }[page];
+    { punch: '打卡管理', sched: '排班管理', leave: '請假管理', salary: '薪資管理', ann: '公告管理', holiday: '國定假日' }[page];
   if (page === 'punch')  initPunch();
   if (page === 'sched')  initSched();
   if (page === 'leave')  initLeave();
   if (page === 'salary') initSalary();
   if (page === 'ann')    initAnn();
+  if (page === 'holiday') initHoliday();
 }
 
 // ── Toast ─────────────────────────────────────────────────────
@@ -2263,13 +2338,16 @@ async function loadLeaveBalances() {
   Object.values(staffMap).forEach(s=>{
     s.items.forEach(it=>{
       const remain = (it.total_days||0)-(it.used_days||0);
+      const showSched = it.leave_code === 'annual'
+        ? `<button class="btn btn-ghost btn-sm" onclick="showAnnualSchedule(${it.staff_id},'${escHtml(s.name)}')" title="查看特休排程">排程</button>`
+        : '';
       html+=`<tr>
         <td style="font-weight:600">${escHtml(s.name)}</td>
         <td><span style="padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:${it.leave_color||'#4a7bda'}22;color:${it.leave_color||'#4a7bda'}">${escHtml(it.leave_type_name)}</span></td>
         <td style="font-family:'DM Mono',monospace;font-weight:600">${it.total_days}</td>
         <td style="font-family:'DM Mono',monospace;color:var(--red)">${it.used_days}</td>
         <td style="font-family:'DM Mono',monospace;font-weight:700;color:${remain>0?'var(--green)':'var(--red)'}">${remain}</td>
-        <td><button class="btn btn-outline btn-sm" onclick="editLeaveBalance(${it.id},${it.total_days},${it.used_days})">調整</button></td>
+        <td style="white-space:nowrap">${showSched}<button class="btn btn-outline btn-sm" onclick="editLeaveBalance(${it.id},${it.total_days},${it.used_days})">調整</button></td>
       </tr>`;
     });
   });
@@ -2280,8 +2358,65 @@ async function initAnnualLeave() {
   const year = document.getElementById('leave-bal-year').value;
   const {ok,data} = await api('/api/leave/balances/init', apiJSON({year}));
   if (!ok) return;
-  document.getElementById('leave-bal-note').textContent=`已計算 ${data.updated} 位員工的特休天數`;
-  showToast(`${year}年特休已自動計算完成（${data.updated}人）`,'success'); await loadLeaveBalances();
+  // Show per-person results
+  const details = data.details || [];
+  const summary = details.map(d => `${escHtml(d.name)}：${d.days}天${d.hire_date?'（'+d.hire_date+'到職）':''}`).join('、');
+  document.getElementById('leave-bal-note').textContent = `已計算 ${data.updated} 位員工`;
+  showToast(`${year}年特休計算完成（${data.updated}人）`, 'success');
+  await loadLeaveBalances();
+}
+
+async function showAnnualSchedule(staffId, staffName) {
+  const {ok,data} = await api(`/api/leave/annual-schedule/${staffId}`, {}, true);
+  if (!ok) return;
+  const schedule = data.schedule || [];
+  const rows = schedule.map(s => {
+    const style = s.is_current
+      ? 'background:var(--navy);color:#fff;'
+      : s.is_past ? 'color:var(--muted);' : 'color:var(--text);';
+    return `<tr style="${style}${s.is_current?'font-weight:700;':''}">
+      <td style="padding:7px 12px">${s.label}</td>
+      <td style="padding:7px 12px;font-family:'DM Mono',monospace;text-align:center">${s.days} 天</td>
+      <td style="padding:7px 12px;font-family:'DM Mono',monospace">${s.date_reached}</td>
+      <td style="padding:7px 12px;font-size:11px">${s.is_current?'▶ 目前':s.is_past?'已達成':'未達成'}</td>
+    </tr>`;
+  }).join('');
+
+  // Create popup
+  const old = document.getElementById('annual-sched-popup');
+  if (old) old.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'annual-sched-popup';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(10,20,45,.55);z-index:400;display:flex;align-items:center;justify-content:center;padding:20px';
+  overlay.onclick = e => { if(e.target===overlay) overlay.remove(); };
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;max-width:520px;width:100%;max-height:80vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,.3)">
+      <div style="padding:18px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:#fff;z-index:1">
+        <div>
+          <div style="font-size:15px;font-weight:700;color:var(--navy)">${escHtml(staffName)} 特休排程</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px">
+            到職日：${data.hire_date || '未設定'}　|　目前特休：<strong style="color:var(--green)">${data.current_days} 天/年</strong>
+          </div>
+        </div>
+        <button onclick="document.getElementById('annual-sched-popup').remove()"
+          style="width:28px;height:28px;border:none;background:var(--bg);border-radius:50%;font-size:16px;cursor:pointer">×</button>
+      </div>
+      <div style="padding:0">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead><tr style="background:var(--bg)">
+            <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border)">里程碑</th>
+            <th style="padding:8px 12px;text-align:center;border-bottom:1px solid var(--border)">特休天數</th>
+            <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border)">到達日期</th>
+            <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border)">狀態</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div style="padding:12px 24px;background:var(--bg);font-size:11px;color:var(--muted);border-top:1px solid var(--border)">
+        依勞基法第38條：滿6個月3天、滿1年7天、滿2年10天、滿3年14天、滿5年15天、滿10年起每年+1天，上限30天
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
 }
 async function editLeaveBalance(id, total, used) {
   const newTotal = parseFloat(prompt(`調整配額天數（原：${total}天）：`, total));
@@ -2738,6 +2873,157 @@ async function deleteSalaryItem(id) {
   showToast('已刪除','success'); await loadSalaryItems();
 }
 
+
+
+// ══════════════════════════════════════════════════════════════
+// 國定假日模組
+// ══════════════════════════════════════════════════════════════
+const WEEKDAY_ZH_H = ['日','一','二','三','四','五','六'];
+const HOLIDAY_TYPE_LABEL = { national:'國定假日', special:'例假日', makeup:'補班日' };
+const HOLIDAY_TYPE_COLOR = { national:'var(--red)', special:'var(--orange)', makeup:'var(--green)' };
+let holidayList = [];
+
+function initHoliday() {
+  const yr = document.getElementById('holiday-year');
+  if (!yr.options.length) {
+    const y = new Date().getFullYear();
+    for (let i = y + 1; i >= y - 1; i--) {
+      const opt = document.createElement('option');
+      opt.value = i; opt.text = i + ' 年';
+      yr.appendChild(opt);
+    }
+    yr.value = y;
+  }
+  loadHolidays();
+}
+
+async function loadHolidays() {
+  const year = document.getElementById('holiday-year').value;
+  const { ok, data } = await api(`/api/holidays?year=${year}`, {}, true);
+  holidayList = ok ? data : [];
+  document.getElementById('holiday-count').textContent = `共 ${holidayList.length} 天`;
+  const tb = document.getElementById('holiday-tbody');
+  if (!holidayList.length) {
+    tb.innerHTML = '<tr><td colspan="5" class="empty-state"><div class="empty-state-text">尚無假日，請點「匯入台灣預設假日」</div></td></tr>';
+    return;
+  }
+  tb.innerHTML = holidayList.map(h => {
+    const dt  = new Date(h.date + 'T00:00:00');
+    const wd  = WEEKDAY_ZH_H[dt.getDay()];
+    const tc  = HOLIDAY_TYPE_COLOR[h.holiday_type] || 'var(--muted)';
+    const tl  = HOLIDAY_TYPE_LABEL[h.holiday_type] || h.holiday_type;
+    return `<tr>
+      <td style="font-family:'DM Mono',monospace;font-weight:600">${h.date}</td>
+      <td style="color:${dt.getDay()===0?'var(--red)':dt.getDay()===6?'var(--accent)':'var(--muted)'}">${wd}</td>
+      <td style="font-weight:600">${escHtml(h.name)}</td>
+      <td><span style="font-size:11px;font-weight:700;color:${tc}">${tl}</span></td>
+      <td><button class="btn btn-danger btn-sm" onclick="deleteHoliday(${h.id})">刪除</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function openHolidayModal(id = null) {
+  document.getElementById('hm-id').value    = id || '';
+  document.getElementById('hm-note').value  = '';
+  document.getElementById('hm-type').value  = 'national';
+  document.getElementById('hm-title').textContent = id ? '編輯假日' : '新增國定假日';
+  if (id) {
+    const h = holidayList.find(x => x.id === id); if (!h) return;
+    document.getElementById('hm-date').value  = h.date;
+    document.getElementById('hm-name').value  = h.name;
+    document.getElementById('hm-type').value  = h.holiday_type || 'national';
+    document.getElementById('hm-note').value  = h.note || '';
+  } else {
+    document.getElementById('hm-date').value = '';
+    document.getElementById('hm-name').value = '';
+  }
+  document.getElementById('holiday-modal').style.display = 'flex';
+}
+function closeHolidayModal() { document.getElementById('holiday-modal').style.display = 'none'; }
+
+async function saveHoliday() {
+  const id   = document.getElementById('hm-id').value;
+  const date = document.getElementById('hm-date').value;
+  const name = document.getElementById('hm-name').value.trim();
+  if (!date || !name) { showToast('請填寫日期和名稱', 'error'); return; }
+  const body = {
+    date, name,
+    holiday_type: document.getElementById('hm-type').value,
+    note:         document.getElementById('hm-note').value.trim(),
+  };
+  const { ok } = await api('/api/holidays', apiJSON(body));
+  if (!ok) return;
+  closeHolidayModal(); showToast('假日已儲存', 'success'); await loadHolidays();
+}
+
+async function deleteHoliday(id) {
+  const h = holidayList.find(x => x.id === id);
+  if (!confirm(`確定刪除「${h ? h.name : id}（${h?.date}）」？`)) return;
+  const { ok } = await api(`/api/holidays/${id}`, { method: 'DELETE' });
+  if (ok) { showToast('已刪除', 'success'); await loadHolidays(); }
+}
+
+async function importDefaultHolidays() {
+  const year = document.getElementById('holiday-year').value;
+  if (!confirm(`確定匯入 ${year} 年台灣國定假日？已存在的假日將更新名稱。`)) return;
+  const { ok, data } = await api('/api/holidays/batch', apiJSON({ holidays: [] }));
+  // Trigger backend re-seed
+  const { ok: ok2, data: d2 } = await api(`/api/holidays?year=${year}`, {}, true);
+  showToast(`已有 ${ok2 ? d2.length : 0} 筆假日記錄`, 'success');
+  await loadHolidays();
+}
+
+async function importHolidayJSON() {
+  const raw = document.getElementById('holiday-batch-json').value.trim();
+  if (!raw) { showToast('請貼上 JSON 內容', 'error'); return; }
+  let holidays;
+  try { holidays = JSON.parse(raw); }
+  catch(e) { showToast('JSON 格式錯誤：' + e.message, 'error'); return; }
+  if (!Array.isArray(holidays)) { showToast('請提供陣列格式的 JSON', 'error'); return; }
+  const { ok, data } = await api('/api/holidays/batch', apiJSON({ holidays }));
+  if (!ok) return;
+  showToast(`成功匯入 ${data.imported} 筆`, 'success');
+  document.getElementById('holiday-batch-json').value = '';
+  await loadHolidays();
+}
+
+// ══════════════════════════════════════════════════════════════
+// 匯出報表模組
+// ══════════════════════════════════════════════════════════════
+function exportAttSummary() {
+  const month = document.getElementById('sum-month').value;
+  if (!month) { showToast('請先選擇月份', 'error'); return; }
+  window.open(`/api/export/attendance-summary?month=${month}`, '_blank');
+}
+
+function exportAttDetail() {
+  const month  = document.getElementById('sum-month').value;
+  const staffEl = document.getElementById('rec-filter-staff');
+  const staff  = staffEl ? staffEl.value : '';
+  if (!month) { showToast('請先選擇月份', 'error'); return; }
+  let url = `/api/export/attendance?month=${month}`;
+  if (staff) url += `&staff_id=${staff}`;
+  window.open(url, '_blank');
+}
+
+function exportSalaryCSV() {
+  const month = document.getElementById('sal-month').value;
+  if (!month) { showToast('請先選擇月份', 'error'); return; }
+  window.open(`/api/export/salary?month=${month}`, '_blank');
+}
+
+function exportLeaveCSV() {
+  const month = document.getElementById('sal-month').value || document.getElementById('leave-req-month').value;
+  if (!month) { showToast('請先選擇月份', 'error'); return; }
+  window.open(`/api/export/leave?month=${month}`, '_blank');
+}
+
+// ══════════════════════════════════════════════════════════════
+// LINE 通知狀態顯示（在 LINE 設定 tab 顯示通知紀錄）
+// ══════════════════════════════════════════════════════════════
+// Notifications are sent automatically on review actions.
+// The LINE punch config tab already shows connection status.
+// No additional UI needed — notifications fire silently on approval/rejection.
 
 // ══════════════════════════════════════════════════════════════
 // 公告管理模組
