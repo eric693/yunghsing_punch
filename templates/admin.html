@@ -222,7 +222,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     <div class="inv-tab-bar">
       <button class="inv-tab active" id="punchtab-summary"  onclick="switchPunchTab('summary')">出勤摘要</button>
       <button class="inv-tab"        id="punchtab-records"  onclick="switchPunchTab('records')">打卡記錄</button>
-      <button class="inv-tab"        id="punchtab-manual"   onclick="switchPunchTab('manual')">補打卡（管理員）</button>
+      <button class="inv-tab"        id="punchtab-manual"   onclick="switchPunchTab('manual')">代補打卡</button>
       <button class="inv-tab"        id="punchtab-requests" onclick="switchPunchTab('requests')">補打申請<span class="tab-badge" id="tabdot-punchrq" style="display:none"></span></button>
       <button class="inv-tab"        id="punchtab-overtime" onclick="switchPunchTab('overtime')">加班申請<span class="tab-badge" id="tabdot-overtime" style="display:none"></span></button>
       <button class="inv-tab"        id="punchtab-staff"    onclick="switchPunchTab('staff')">員工管理</button>
@@ -278,7 +278,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     <div id="punch-panel-manual" style="display:none">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px" id="manual-grid">
         <div class="card" style="padding:24px">
-          <div class="card-title" style="margin-bottom:18px;padding:0">新增補打卡</div>
+          <div class="card-title" style="margin-bottom:6px;padding:0">代補打卡（代員工新增打卡記錄）</div><div style="font-size:12px;color:var(--muted);margin-bottom:16px">此功能供管理員直接幫員工補齊漏打的打卡記錄，不需員工申請。</div>
           <div style="margin-bottom:14px"><label class="form-label">員工</label><select class="form-input" id="man-staff" style="width:100%"></select></div>
           <div style="margin-bottom:14px">
             <label class="form-label">打卡類型</label>
