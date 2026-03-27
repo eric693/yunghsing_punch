@@ -4269,3 +4269,591 @@ def api_dashboard():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
+
+# ═══════════════════════════════════════════════════════════════════
+# Feature: Salary PDF (HTML print endpoint)
+# ═══════════════════════════════════════════════════════════════════
+
+@app.route('/api/salary/records/<int:rid>/pdf', methods=['GET'])
+def api_salary_pdf(rid):
+    """回傳薪資單 HTML（供瀏覽器列印/另存 PDF）"""
+    # 允許員工查看自己的薪資單
+    if not session.get('logged_in'):
+        sid = session.get('punch_staff_id')
+        if not sid:
+            return '未登入', 401
+    with get_db() as conn:
+        row = conn.execute("""
+            SELECT sr.*, ps.name as staff_name, ps.employee_code,
+                   ps.department, ps.role, ps.salary_type,
+                   ps.hourly_rate, ps.hire_date
+            FROM salary_records sr
+            JOIN punch_staff ps ON ps.id = sr.staff_id
+            WHERE sr.id = %s
+        """, (rid,)).fetchone()
+    if not row:
+        return '找不到薪資記錄', 404
+    # 員工只能看自己的
+    if not session.get('logged_in'):
+        if row['staff_id'] != session.get('punch_staff_id'):
+            return '無權限', 403
+
+    d         = salary_record_row(row)
+    items     = d.get('items') or []
+    allow_items  = [i for i in items if i.get('type') == 'allowance']
+    deduct_items = [i for i in items if i.get('type') == 'deduction']
+    is_hourly = (row['salary_type'] == 'hourly')
+
+    def money(v):
+        try: return f"${float(v):,.0f}"
+        except: return '$0'
+
+    def esc_h(s):
+        return str(s or '').replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+
+    allow_rows = ''.join(f"""
+        <tr>
+          <td>{esc_h(i['name'])}</td>
+          <td class="num green">{money(i['amount'])}</td>
+          <td class="note">{esc_h(i.get('calc_note',''))}</td>
+        </tr>""" for i in allow_items)
+
+    deduct_rows = ''.join(f"""
+        <tr>
+          <td>{esc_h(i['name'])}</td>
+          <td class="num red">-{money(i['amount'])}</td>
+          <td class="note">{esc_h(i.get('calc_note',''))}</td>
+        </tr>""" for i in deduct_items)
+
+    punch_table = ''
+    if is_hourly and d.get('punch_details'):
+        punch_rows = ''.join(f"""
+            <tr>
+              <td>{p['date']}</td>
+              <td>{p['clock_in']}</td>
+              <td>{p['clock_out']}</td>
+              <td>{p.get('break_mins',0)} min</td>
+              <td class="num">{p['net_hours']} h</td>
+            </tr>""" for p in d['punch_details'])
+        punch_table = f"""
+        <h3>每日工時明細</h3>
+        <table>
+          <thead><tr><th>日期</th><th>上班</th><th>下班</th><th>休息</th><th>工時</th></tr></thead>
+          <tbody>{punch_rows}</tbody>
+          <tfoot><tr><td colspan="4"><strong>合計</strong></td><td class="num"><strong>{d.get('actual_work_hours',0)} h</strong></td></tr></tfoot>
+        </table>"""
+
+    status_str = '已確認' if row['status'] == 'confirmed' else '草稿（未確認）'
+    sal_type   = '時薪制' if is_hourly else '月薪制'
+    attend_str = (f"實際工時 {d.get('actual_work_hours',0)}h × 時薪 ${float(row['hourly_rate'] or 0):,.0f}"
+                  if is_hourly else
+                  f"出勤 {d.get('actual_days',0)} 天 / 工作日 {d.get('work_days',0)} 天")
+    if float(d.get('leave_days',0)) > 0:
+        attend_str += f"，請假 {d.get('leave_days',0)} 天"
+    if float(d.get('unpaid_days',0)) > 0:
+        attend_str += f"（無薪 {d.get('unpaid_days',0)} 天）"
+
+    html = f"""<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>薪資單 {esc_h(row['staff_name'])} {esc_h(row['month'])}</title>
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ font-family: 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+          font-size: 13px; color: #1a2340; background: #fff; padding: 32px; }}
+  .header {{ display: flex; justify-content: space-between; align-items: flex-start;
+             border-bottom: 3px solid #1a2340; padding-bottom: 16px; margin-bottom: 24px; }}
+  .company {{ font-size: 20px; font-weight: 800; color: #1a2340; }}
+  .slip-title {{ font-size: 14px; color: #666; margin-top: 4px; }}
+  .staff-info {{ font-size: 12px; color: #444; text-align: right; line-height: 1.8; }}
+  .summary {{ display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; margin-bottom: 24px; }}
+  .sum-card {{ border: 1.5px solid #e2e8f0; border-radius: 8px; padding: 12px 16px; text-align: center; }}
+  .sum-label {{ font-size: 10px; color: #888; margin-bottom: 4px; text-transform: uppercase; letter-spacing: .06em; }}
+  .sum-val {{ font-size: 22px; font-weight: 800; font-family: 'DM Mono', monospace; }}
+  .sum-val.green {{ color: #2e9e6b; }}
+  .sum-val.red   {{ color: #d64242; }}
+  .sum-val.navy  {{ color: #1a2340; }}
+  .attend {{ background: #f8fafc; border-radius: 6px; padding: 8px 14px;
+             font-size: 12px; color: #666; margin-bottom: 20px; }}
+  h3 {{ font-size: 12px; font-weight: 700; color: #888; letter-spacing: .08em;
+        text-transform: uppercase; margin: 20px 0 8px; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+  th {{ background: #f1f5f9; padding: 8px 12px; text-align: left;
+        font-size: 11px; font-weight: 700; color: #666;
+        border-bottom: 2px solid #e2e8f0; }}
+  td {{ padding: 7px 12px; border-bottom: 1px solid #f0f2f8; }}
+  td.num {{ text-align: right; font-family: 'DM Mono', monospace; font-weight: 600; }}
+  td.note {{ font-size: 11px; color: #999; }}
+  td.green {{ color: #2e9e6b; }}
+  td.red   {{ color: #d64242; }}
+  tfoot td {{ font-weight: 700; background: #f8fafc; border-top: 2px solid #e2e8f0; }}
+  .net-row td {{ font-size: 16px; font-weight: 800; background: #1a2340; color: #fff; }}
+  .net-row td.num {{ color: #f0c040; font-size: 20px; }}
+  .footer {{ margin-top: 32px; padding-top: 16px; border-top: 1px solid #e2e8f0;
+             display: flex; justify-content: space-between; font-size: 11px; color: #999; }}
+  .sign-area {{ display: flex; gap: 48px; margin-top: 40px; }}
+  .sign-box {{ flex: 1; border-top: 1px solid #ccc; padding-top: 6px; font-size: 11px; color: #666; }}
+  @media print {{
+    body {{ padding: 16px; }}
+    @page {{ margin: 12mm; size: A4; }}
+    .no-print {{ display: none !important; }}
+  }}
+</style>
+</head>
+<body>
+
+<div class="no-print" style="text-align:right;margin-bottom:20px">
+  <button onclick="window.print()"
+    style="padding:10px 24px;background:#1a2340;color:#fff;border:none;border-radius:6px;
+           font-size:13px;font-weight:700;cursor:pointer">列印 / 儲存 PDF</button>
+</div>
+
+<div class="header">
+  <div>
+    <div class="company">薪資明細單</div>
+    <div class="slip-title">{esc_h(row['month'])} · {sal_type}</div>
+  </div>
+  <div class="staff-info">
+    <div><strong>{esc_h(row['staff_name'])}</strong></div>
+    <div>{esc_h(row['employee_code'] or '')}　{esc_h(row['department'] or '')}　{esc_h(row['role'] or '')}</div>
+    <div>到職日：{esc_h(str(row['hire_date']) if row['hire_date'] else '—')}</div>
+    <div>狀態：<strong>{status_str}</strong></div>
+  </div>
+</div>
+
+<div class="summary">
+  <div class="sum-card">
+    <div class="sum-label">津貼合計</div>
+    <div class="sum-val green">{money(d.get('allowance_total',0))}</div>
+  </div>
+  <div class="sum-card">
+    <div class="sum-label">扣除合計</div>
+    <div class="sum-val red">-{money(d.get('deduction_total',0))}</div>
+  </div>
+  <div class="sum-card" style="border-color:#1a2340">
+    <div class="sum-label">實領金額</div>
+    <div class="sum-val navy">{money(d.get('net_pay',0))}</div>
+  </div>
+</div>
+
+<div class="attend">{attend_str}</div>
+
+<h3>津貼項目</h3>
+<table>
+  <thead><tr><th>項目</th><th style="text-align:right">金額</th><th>計算說明</th></tr></thead>
+  <tbody>{allow_rows}</tbody>
+  <tfoot>
+    <tr><td><strong>津貼合計</strong></td><td class="num green"><strong>{money(d.get('allowance_total',0))}</strong></td><td></td></tr>
+  </tfoot>
+</table>
+
+<h3>扣除項目</h3>
+<table>
+  <thead><tr><th>項目</th><th style="text-align:right">金額</th><th>計算說明</th></tr></thead>
+  <tbody>{deduct_rows if deduct_rows else '<tr><td colspan="3" style="color:#ccc;text-align:center;padding:12px">無扣除項目</td></tr>'}</tbody>
+  <tfoot>
+    <tr><td><strong>扣除合計</strong></td><td class="num red"><strong>-{money(d.get('deduction_total',0))}</strong></td><td></td></tr>
+  </tfoot>
+</table>
+
+<table style="margin-top:12px">
+  <tbody>
+    <tr class="net-row">
+      <td><strong>實領金額</strong></td>
+      <td class="num">{money(d.get('net_pay',0))}</td>
+      <td style="color:#ccc;font-size:11px">= 津貼 {money(d.get('allowance_total',0))} - 扣除 {money(d.get('deduction_total',0))}</td>
+    </tr>
+  </tbody>
+</table>
+
+{punch_table}
+
+<div class="sign-area">
+  <div class="sign-box">員工簽名</div>
+  <div class="sign-box">主管確認</div>
+  <div class="sign-box">人資確認</div>
+</div>
+
+<div class="footer">
+  <span>本薪資單由系統自動產生</span>
+  <span>列印日期：<script>document.write(new Date().toLocaleDateString('zh-TW'))</script></span>
+</div>
+
+</body>
+</html>"""
+
+    return html, 200, {'Content-Type': 'text/html; charset=utf-8'}
+
+# ═══════════════════════════════════════════════════════════════════
+# Feature: Batch Review (批次審核)
+# ═══════════════════════════════════════════════════════════════════
+
+@app.route('/api/punch/requests/batch', methods=['POST'])
+@login_required
+def api_punch_req_batch():
+    b      = request.get_json(force=True)
+    ids    = [int(i) for i in b.get('ids', [])]
+    action = b.get('action')
+    by     = b.get('reviewed_by', '管理員')
+    note   = b.get('review_note', '')
+    if not ids or action not in ('approve', 'reject'):
+        return jsonify({'error': '參數錯誤'}), 400
+    new_status = 'approved' if action == 'approve' else 'rejected'
+    done = 0
+    with get_db() as conn:
+        for rid in ids:
+            row = conn.execute("""
+                UPDATE punch_requests SET status=%s, reviewed_by=%s,
+                  review_note=%s, reviewed_at=NOW()
+                WHERE id=%s AND status='pending' RETURNING *
+            """, (new_status, by, note, rid)).fetchone()
+            if row:
+                if action == 'approve':
+                    conn.execute("""
+                        INSERT INTO punch_records
+                          (staff_id, punch_type, punched_at, note, is_manual, manual_by)
+                        VALUES (%s,%s,%s,%s,TRUE,%s)
+                    """, (row['staff_id'], row['punch_type'], row['requested_at'],
+                          f'補打卡申請#{rid}', by))
+                _notify_review_result(row['staff_id'], '補打卡申請', action,
+                                      note and f'批次審核意見：{note}' or '')
+                done += 1
+    return jsonify({'ok': True, 'done': done})
+
+
+@app.route('/api/overtime/requests/batch', methods=['POST'])
+@login_required
+def api_ot_batch():
+    b      = request.get_json(force=True)
+    ids    = [int(i) for i in b.get('ids', [])]
+    action = b.get('action')
+    by     = b.get('reviewed_by', '管理員')
+    note   = b.get('review_note', '')
+    if not ids or action not in ('approve', 'reject'):
+        return jsonify({'error': '參數錯誤'}), 400
+    new_status = 'approved' if action == 'approve' else 'rejected'
+    done = 0
+    with get_db() as conn:
+        for rid in ids:
+            row = conn.execute("""
+                UPDATE overtime_requests SET status=%s, reviewed_by=%s,
+                  review_note=%s, reviewed_at=NOW()
+                WHERE id=%s AND status='pending' RETURNING *
+            """, (new_status, by, note, rid)).fetchone()
+            if row:
+                if action == 'approve':
+                    pay, _ = _calc_ot_pay(dict(row), float(row['ot_hours']),
+                                          row.get('day_type','weekday'))
+                    conn.execute("""
+                        UPDATE overtime_requests SET ot_pay=%s WHERE id=%s
+                    """, (pay, rid))
+                _notify_review_result(row['staff_id'], '加班申請', action, '')
+                done += 1
+    return jsonify({'ok': True, 'done': done})
+
+
+@app.route('/api/schedule/requests/batch', methods=['POST'])
+@login_required
+def api_sched_batch():
+    b      = request.get_json(force=True)
+    ids    = [int(i) for i in b.get('ids', [])]
+    action = b.get('action')
+    by     = b.get('reviewed_by', '管理員')
+    note   = b.get('review_note', '')
+    if not ids or action not in ('approve', 'reject'):
+        return jsonify({'error': '參數錯誤'}), 400
+    new_status = 'approved' if action == 'approve' else 'rejected'
+    done = 0
+    with get_db() as conn:
+        for rid in ids:
+            row = conn.execute("""
+                UPDATE schedule_requests SET status=%s, reviewed_by=%s,
+                  review_note=%s, reviewed_at=NOW(), updated_at=NOW()
+                WHERE id=%s AND status IN ('pending','modified_pending') RETURNING *
+            """, (new_status, by, note, rid)).fetchone()
+            if row:
+                _notify_review_result(row['staff_id'], '排休申請', action, '')
+                done += 1
+    return jsonify({'ok': True, 'done': done})
+
+
+@app.route('/api/leave/requests/batch', methods=['POST'])
+@login_required
+def api_leave_batch():
+    b      = request.get_json(force=True)
+    ids    = [int(i) for i in b.get('ids', [])]
+    action = b.get('action')
+    by     = b.get('reviewed_by', '管理員')
+    note   = b.get('review_note', '')
+    if not ids or action not in ('approve', 'reject'):
+        return jsonify({'error': '參數錯誤'}), 400
+    new_status = 'approved' if action == 'approve' else 'rejected'
+    done = 0
+    with get_db() as conn:
+        for rid in ids:
+            old = conn.execute("SELECT * FROM leave_requests WHERE id=%s", (rid,)).fetchone()
+            if not old or old['status'] != 'pending':
+                continue
+            row = conn.execute("""
+                UPDATE leave_requests SET status=%s, reviewed_by=%s,
+                  review_note=%s, reviewed_at=NOW(), updated_at=NOW()
+                WHERE id=%s RETURNING *
+            """, (new_status, by, note, rid)).fetchone()
+            if row:
+                if action == 'approve':
+                    _update_leave_balance(conn, old['staff_id'], old['leave_type_id'],
+                                          str(old['start_date'])[:4], float(old['total_days']))
+                _notify_review_result(old['staff_id'], '請假申請', action, '')
+                done += 1
+    return jsonify({'ok': True, 'done': done})
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Feature: Attendance Anomaly Detection (出勤異常)
+# ═══════════════════════════════════════════════════════════════════
+
+@app.route('/api/attendance/anomalies', methods=['GET'])
+@login_required
+def api_attendance_anomalies():
+    """
+    偵測出勤異常：
+    - 忘記打下班卡（有上班無下班）
+    - 只有下班無上班
+    - 遲到（上班時間晚於班別開始時間）
+    """
+    from datetime import date as _da, datetime as _dta, timezone as _tz, timedelta as _td
+    TW    = _tz(_td(hours=8))
+    today = _dta.now(TW).date()
+    # Check last 7 days
+    date_from = today - _td(days=7)
+
+    with get_db() as conn:
+        # 取得最近7天打卡記錄（按人、按天）
+        rows = conn.execute("""
+            SELECT ps.id as staff_id, ps.name, ps.role, ps.department,
+                   (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date as work_date,
+                   array_agg(pr.punch_type ORDER BY pr.punched_at) as types,
+                   MIN(CASE WHEN pr.punch_type='in'  THEN to_char(pr.punched_at AT TIME ZONE 'Asia/Taipei','HH24:MI') END) as first_in,
+                   MAX(CASE WHEN pr.punch_type='out' THEN to_char(pr.punched_at AT TIME ZONE 'Asia/Taipei','HH24:MI') END) as last_out
+            FROM punch_records pr
+            JOIN punch_staff ps ON ps.id = pr.staff_id
+            WHERE (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date BETWEEN %s AND %s
+              AND ps.active = TRUE
+            GROUP BY ps.id, ps.name, ps.role, ps.department,
+                     (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date
+            ORDER BY work_date DESC, ps.name
+        """, (date_from, today)).fetchall()
+
+        # 取得班別指派（用於遲到判斷）
+        shift_rows = conn.execute("""
+            SELECT sa.staff_id, sa.date, st.start_time, st.name as shift_name
+            FROM shift_assignments sa
+            JOIN shift_types st ON st.id = sa.shift_type_id
+            WHERE sa.date BETWEEN %s AND %s
+        """, (date_from, today)).fetchall()
+        shift_map = {(r['staff_id'], str(r['date'])): r for r in shift_rows}
+
+        # 今日應出勤但未出勤（排除請假）
+        all_staff = conn.execute(
+            "SELECT id, name, role, department FROM punch_staff WHERE active=TRUE"
+        ).fetchall()
+        today_punched_ids = {r['staff_id'] for r in rows if str(r['work_date']) == str(today)}
+        on_leave_today_ids = set()
+        leave_today = conn.execute("""
+            SELECT DISTINCT staff_id FROM leave_requests
+            WHERE status='approved' AND start_date <= %s AND end_date >= %s
+        """, (today, today)).fetchall()
+        for r in leave_today:
+            on_leave_today_ids.add(r['staff_id'])
+
+    anomalies = []
+
+    # 1. 近7天：有上班但無下班卡
+    for r in rows:
+        types = list(r['types']) if r['types'] else []
+        has_in  = 'in'  in types
+        has_out = 'out' in types
+        ds = str(r['work_date'])
+
+        if has_in and not has_out and ds != str(today):
+            # 昨天或更早沒打下班卡（今天的可能還沒下班）
+            anomalies.append({
+                'type':       'missing_out',
+                'label':      '忘記下班打卡',
+                'severity':   'warning',
+                'staff_id':   r['staff_id'],
+                'name':       r['name'],
+                'role':       r['role'] or '',
+                'department': r['department'] or '',
+                'date':       ds,
+                'detail':     f"上班 {r['first_in']}，無下班記錄",
+            })
+
+        if not has_in and has_out:
+            anomalies.append({
+                'type':       'missing_in',
+                'label':      '忘記上班打卡',
+                'severity':   'warning',
+                'staff_id':   r['staff_id'],
+                'name':       r['name'],
+                'role':       r['role'] or '',
+                'department': r['department'] or '',
+                'date':       ds,
+                'detail':     f"下班 {r['last_out']}，無上班記錄",
+            })
+
+        # 遲到判斷（有班別指派）
+        if has_in and r['first_in']:
+            shift = shift_map.get((r['staff_id'], ds))
+            if shift and shift['start_time']:
+                try:
+                    sh, sm = map(int, str(shift['start_time'])[:5].split(':'))
+                    ih, im = map(int, r['first_in'].split(':'))
+                    late_mins = (ih * 60 + im) - (sh * 60 + sm)
+                    if late_mins > 10:  # 超過10分鐘算遲到
+                        anomalies.append({
+                            'type':       'late',
+                            'label':      '遲到',
+                            'severity':   'info',
+                            'staff_id':   r['staff_id'],
+                            'name':       r['name'],
+                            'role':       r['role'] or '',
+                            'department': r['department'] or '',
+                            'date':       ds,
+                            'detail':     f"應 {shift['start_time'][:5]} 上班，實際 {r['first_in']}（晚 {late_mins} 分鐘）",
+                        })
+                except Exception:
+                    pass
+
+    # 2. 今日未出勤（不含請假）
+    for s in all_staff:
+        if s['id'] not in today_punched_ids and s['id'] not in on_leave_today_ids:
+            anomalies.append({
+                'type':       'absent',
+                'label':      '今日未出勤',
+                'severity':   'error',
+                'staff_id':   s['id'],
+                'name':       s['name'],
+                'role':       s['role'] or '',
+                'department': s['department'] or '',
+                'date':       str(today),
+                'detail':     '今日尚無打卡記錄且未請假',
+            })
+
+    # Sort: error > warning > info, then by date desc
+    sev_order = {'error': 0, 'warning': 1, 'info': 2}
+    anomalies.sort(key=lambda x: (sev_order.get(x['severity'], 9), x['date']))
+    return jsonify({'anomalies': anomalies, 'count': len(anomalies), 'checked_from': str(date_from)})
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Feature: Staff Termination (離職流程)
+# ═══════════════════════════════════════════════════════════════════
+
+@app.route('/api/punch/staff/<int:sid>/terminate', methods=['POST'])
+@login_required
+def api_staff_terminate(sid):
+    """辦理離職：設定離職日、停用帳號、記錄備註"""
+    b = request.get_json(force=True)
+    termination_date = b.get('termination_date', '')
+    reason           = b.get('reason', '').strip()
+    last_month       = b.get('last_salary_month', '')
+    note             = b.get('note', '').strip()
+
+    if not termination_date:
+        return jsonify({'error': '請填寫離職日期'}), 400
+
+    with get_db() as conn:
+        # Ensure column exists
+        try:
+            conn.execute("ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS termination_date DATE")
+            conn.execute("ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS termination_reason TEXT DEFAULT ''")
+            conn.execute("ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS termination_note TEXT DEFAULT ''")
+        except Exception:
+            pass
+
+        row = conn.execute("""
+            UPDATE punch_staff SET
+              active = FALSE,
+              termination_date   = %s,
+              termination_reason = %s,
+              termination_note   = %s,
+              salary_notes = COALESCE(salary_notes,'') || %s
+            WHERE id = %s RETURNING *
+        """, (termination_date, reason, note,
+              f'\n【離職】{termination_date} {reason}',
+              sid)).fetchone()
+        if not row:
+            return ('', 404)
+
+    return jsonify({
+        'ok': True,
+        'staff_id': sid,
+        'name': row['name'],
+        'termination_date': termination_date,
+        'last_salary_month': last_month,
+    })
+
+
+@app.route('/api/punch/staff/<int:sid>/reinstate', methods=['POST'])
+@login_required
+def api_staff_reinstate(sid):
+    """復職（重新啟用帳號）"""
+    with get_db() as conn:
+        row = conn.execute("""
+            UPDATE punch_staff SET active=TRUE,
+              termination_date=NULL, termination_reason='', termination_note=''
+            WHERE id=%s RETURNING *
+        """, (sid,)).fetchone()
+    return jsonify(punch_staff_row(row)) if row else ('', 404)
+
+
+@app.route('/api/punch/staff/terminated', methods=['GET'])
+@login_required
+def api_staff_terminated_list():
+    """離職員工清單"""
+    with get_db() as conn:
+        # Check if column exists
+        try:
+            rows = conn.execute("""
+                SELECT id, name, employee_code, department, role,
+                       hire_date, termination_date, termination_reason
+                FROM punch_staff
+                WHERE active = FALSE
+                ORDER BY termination_date DESC NULLS LAST, name
+            """).fetchall()
+        except Exception:
+            rows = conn.execute(
+                "SELECT id, name, employee_code, department, role, hire_date FROM punch_staff WHERE active=FALSE"
+            ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        for f in ('hire_date','termination_date'):
+            if d.get(f): d[f] = str(d[f])
+        result.append(d)
+    return jsonify(result)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Feature: Salary Formula Builder support (公式說明 API)
+# ═══════════════════════════════════════════════════════════════════
+
+@app.route('/api/salary/formula/preview', methods=['POST'])
+@login_required
+def api_formula_preview():
+    """即時預覽公式計算結果"""
+    b             = request.get_json(force=True)
+    formula       = b.get('formula', '').strip()
+    base_salary   = float(b.get('base_salary', 30000))
+    insured_salary= float(b.get('insured_salary', 30000))
+    service_years = float(b.get('service_years', 1))
+
+    if not formula:
+        return jsonify({'result': 0, 'error': None})
+    try:
+        result = _eval_formula(formula, base_salary, insured_salary, service_years)
+        return jsonify({'result': round(result, 2), 'error': None})
+    except Exception as e:
+        return jsonify({'result': None, 'error': str(e)})

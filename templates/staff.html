@@ -1637,7 +1637,7 @@ async function loadMyPayslip() {
   wrap.innerHTML = '<div style="text-align:center;color:var(--muted);font-size:13px;padding:40px">載入中...</div>';
   try {
     // 找自己這個月的薪資記錄
-    const res  = await fetch(`/api/salary/my-payslip?month=${month}`);
+    const res  = await fetch(`/api/salary/my-payslip?month=${month}&_=${Date.now()}`);
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));
       wrap.innerHTML = `<div style="text-align:center;color:var(--muted);font-size:13px;padding:40px">${esc(d.error || '該月尚無薪資記錄')}</div>`;
@@ -1723,9 +1723,13 @@ function renderPayslip(data, wrap) {
       </div>
     </div>
     <!-- 狀態 -->
-    <div style="padding:10px 16px;background:var(--bg);border-top:1px solid var(--border);font-size:12px;color:var(--muted);display:flex;justify-content:space-between">
+    <div style="padding:10px 16px;background:var(--bg);border-top:1px solid var(--border);font-size:12px;color:var(--muted);display:flex;justify-content:space-between;align-items:center">
       <span>狀態：<strong style="color:${data.status==='confirmed'?'var(--green)':'var(--muted)'}">${data.status==='confirmed'?'✅ 已確認':'草稿（待確認）'}</strong></span>
-      ${data.confirmed_by ? `<span>確認人：${esc(data.confirmed_by)}</span>` : ''}
+      <div style="display:flex;gap:8px;align-items:center">
+        ${data.confirmed_by ? `<span>確認人：${esc(data.confirmed_by)}</span>` : ''}
+        ${data.id ? `<button onclick="window.open('/api/salary/records/'+data.id+'/pdf','_blank')"
+          style="padding:4px 12px;background:var(--navy);color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">列印 PDF</button>` : ''}
+      </div>
     </div>
   </div>
 
