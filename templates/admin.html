@@ -220,6 +220,15 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
       <span class="topbar-title" id="page-title">打卡管理</span>
     </div>
     <div class="topbar-actions">
+      <div style="position:relative" id="staff-search-wrap">
+        <input class="search-box" id="staff-search-input" placeholder="🔍 搜尋員工..."
+               oninput="staffSearchInput(this.value)" onfocus="staffSearchInput(this.value)"
+               onblur="setTimeout(closeStaffSearch,200)"
+               style="width:180px;padding:7px 12px;font-size:13px">
+        <div id="staff-search-dd" style="display:none;position:absolute;right:0;top:calc(100% + 4px);
+             width:280px;background:#fff;border-radius:8px;border:1px solid var(--border);
+             box-shadow:0 8px 32px rgba(0,0,0,0.15);z-index:2000;max-height:320px;overflow-y:auto"></div>
+      </div>
       <span style="font-size:12px;color:var(--muted)" id="topbar-admin-name"></span>
     </div>
   </header>
@@ -475,6 +484,9 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
           <option value="pending">待審核</option><option value="">全部</option>
           <option value="approved">已核准</option><option value="rejected">已退回</option>
         </select>
+        <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;color:var(--text)">
+          <input type="checkbox" id="preq-select-all" onchange="selectAllBatch('punch',this.checked)">全選
+        </label>
         <span style="flex:1"></span>
         <span id="preq-count" style="font-size:12px;color:var(--muted)"></span>
         <button class="btn btn-primary btn-sm" id="preq-batch-approve" style="display:none" onclick="batchReview('punch','approve')">批次核准</button>
@@ -499,6 +511,9 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
           <button class="btn btn-sm" id="ot-view-list-btn" onclick="setOTView('list')" style="background:var(--navy);color:#fff;border:none">申請列表</button>
           <button class="btn btn-sm btn-outline" id="ot-view-summary-btn" onclick="setOTView('summary')">月統計</button>
         </div>
+        <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;color:var(--text)">
+          <input type="checkbox" id="ot-select-all" onchange="selectAllBatch('ot',this.checked)">全選
+        </label>
         <span style="flex:1"></span>
         <span id="ot-req-count" style="font-size:12px;color:var(--muted)"></span>
         <button class="btn btn-primary btn-sm" id="ot-batch-approve" style="display:none" onclick="batchReview('ot','approve')">批次核准</button>
@@ -792,6 +807,9 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
           <option value="">全部</option>
         </select>
         <span style="flex:1"></span>
+        <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;color:var(--text)">
+          <input type="checkbox" id="leave-select-all" onchange="selectAllBatch('leave',this.checked)">全選
+        </label>
         <button class="btn btn-primary" onclick="openLeaveAdminModal()">管理員代填</button>
         <span id="leave-req-count" style="font-size:12px;color:var(--muted)"></span>
         <button class="btn btn-primary btn-sm" id="leave-batch-approve" style="display:none" onclick="batchReview('leave','approve')">批次核准</button>
@@ -1914,6 +1932,35 @@ function toggleBatchItem(category, id, checked) {
   if (checked) _batchSelected[category].add(id);
   else         _batchSelected[category].delete(id);
   _updateBatchButtons(category);
+  _syncSelectAll(category);
+}
+
+function selectAllBatch(category, checked) {
+  const cbs = document.querySelectorAll(`.batch-cb[data-cat="${category}"]`);
+  cbs.forEach(cb => {
+    cb.checked = checked;
+    const id = parseInt(cb.dataset.id);
+    if (checked) _batchSelected[category].add(id);
+    else         _batchSelected[category].delete(id);
+  });
+  _updateBatchButtons(category);
+}
+
+function _syncSelectAll(category) {
+  const saMap = { punch: 'preq-select-all', ot: 'ot-select-all', leave: 'leave-select-all' };
+  const el = document.getElementById(saMap[category]);
+  if (!el) return;
+  const cbs = [...document.querySelectorAll(`.batch-cb[data-cat="${category}"]`)];
+  if (!cbs.length) { el.checked = false; el.indeterminate = false; return; }
+  const n = cbs.filter(c => c.checked).length;
+  el.checked       = n === cbs.length;
+  el.indeterminate = n > 0 && n < cbs.length;
+}
+
+function _resetSelectAll(category) {
+  const saMap = { punch: 'preq-select-all', ot: 'ot-select-all', leave: 'leave-select-all' };
+  const el = document.getElementById(saMap[category]);
+  if (el) { el.checked = false; el.indeterminate = false; }
 }
 
 function _updateBatchButtons(category) {
@@ -1949,6 +1996,7 @@ async function batchReview(category, action) {
   showToast(`已批次${label} ${data.done} 筆`, 'success');
   _batchSelected[category].clear();
   _updateBatchButtons(category);
+  _resetSelectAll(category);
   // Reload the appropriate list
   if (category === 'punch')  loadPunchRequests();
   if (category === 'ot')     loadOTRequests();
@@ -2554,6 +2602,95 @@ function renderDashOTBar(ranking) {
   });
 }
 
+// ══════════════════════════════════════════════════════════════
+// 員工快速搜尋
+// ══════════════════════════════════════════════════════════════
+let _staffSearchCache = null;
+
+async function _getStaffList() {
+  if (!_staffSearchCache) {
+    const { ok, data } = await api('/api/punch/staff', {}, true);
+    _staffSearchCache = ok ? data.filter(s => s.active) : [];
+  }
+  return _staffSearchCache;
+}
+
+async function staffSearchInput(q) {
+  const dd = document.getElementById('staff-search-dd');
+  if (!q || !q.trim()) { dd.style.display = 'none'; return; }
+  const list = await _getStaffList();
+  const ql = q.toLowerCase();
+  const hits = list.filter(s =>
+    (s.name||'').toLowerCase().includes(ql) ||
+    (s.employee_code||'').toLowerCase().includes(ql) ||
+    (s.department||'').toLowerCase().includes(ql) ||
+    (s.role||'').toLowerCase().includes(ql)
+  ).slice(0, 8);
+  if (!hits.length) {
+    dd.innerHTML = '<div style="padding:14px 16px;font-size:13px;color:var(--muted);text-align:center">無符合員工</div>';
+  } else {
+    dd.innerHTML = hits.map(s => `
+      <div class="staff-search-item" data-sid="${s.id}"
+           style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;border-bottom:1px solid #f4f6fb"
+           onmousedown="staffSearchSelect(${s.id})"
+           onmouseover="this.style.background='var(--bg)'" onmouseout="this.style.background=''">
+        <div style="width:34px;height:34px;border-radius:50%;background:var(--navy);color:#fff;display:flex;
+             align-items:center;justify-content:center;font-size:14px;font-weight:700;flex-shrink:0">
+          ${escHtml((s.name||'?')[0])}
+        </div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;font-size:13px">${escHtml(s.name||'')}</div>
+          <div style="font-size:11px;color:var(--muted)">${escHtml(s.department||'')}${s.role?' · '+escHtml(s.role):''}</div>
+        </div>
+        <div style="font-size:11px;font-family:'DM Mono',monospace;color:var(--muted)">${escHtml(s.employee_code||'')}</div>
+      </div>`).join('');
+  }
+  dd.style.display = '';
+}
+
+function closeStaffSearch() {
+  const dd = document.getElementById('staff-search-dd');
+  if (dd) dd.style.display = 'none';
+}
+
+function staffSearchSelect(staffId) {
+  document.getElementById('staff-search-input').value = '';
+  closeStaffSearch();
+  showPage('punch', null);
+  setTimeout(() => {
+    switchPunchTab('records');
+    setTimeout(() => {
+      const sel = document.getElementById('rec-filter-staff');
+      if (sel) { sel.value = staffId; loadPunchRecords(); }
+    }, 150);
+  }, 150);
+}
+
+// ══════════════════════════════════════════════════════════════
+// 篩選條件持久化（URL query string）
+// ══════════════════════════════════════════════════════════════
+function _persistFilters(tag, map) {
+  // map: { urlKey: domElementId }
+  const p = new URLSearchParams(window.location.search);
+  p.set('pf', tag);
+  Object.entries(map).forEach(([k, elId]) => {
+    const el = document.getElementById(elId);
+    const v = el ? el.value : '';
+    if (v) p.set(k, v); else p.delete(k);
+  });
+  history.replaceState(null, '', '?' + p.toString());
+}
+
+function _restoreFilters(tag, map) {
+  const p = new URLSearchParams(window.location.search);
+  if (p.get('pf') !== tag) return;
+  Object.entries(map).forEach(([k, elId]) => {
+    const el = document.getElementById(elId);
+    const v = p.get(k);
+    if (el && v) el.value = v;
+  });
+}
+
 // ── Navigation ────────────────────────────────────────────────
 function openSidebar() {
   document.getElementById('sidebar').classList.add('open');
@@ -2617,6 +2754,7 @@ function initPunch() {
   document.getElementById('sum-month').value = ym;
   const mstatsEl = document.getElementById('mstats-month');
   if (mstatsEl) mstatsEl.value = ym;
+  _restoreFilters('punch-rec', { rec_staff:'rec-filter-staff', rec_month:'rec-filter-month', rec_from:'rec-filter-from', rec_to:'rec-filter-to' });
   switchPunchTab('summary');
 }
 
@@ -2779,6 +2917,7 @@ async function loadPunchRecords() {
   const from  = document.getElementById('rec-filter-from').value;
   const to    = document.getElementById('rec-filter-to').value;
   const month = document.getElementById('rec-filter-month').value;
+  _persistFilters('punch-rec', { rec_staff:'rec-filter-staff', rec_month:'rec-filter-month', rec_from:'rec-filter-from', rec_to:'rec-filter-to' });
   let url = '/api/punch/records?';
   if (staff) url += `staff_id=${staff}&`;
   if (month) url += `month=${month}&`;
@@ -3114,7 +3253,7 @@ function renderPunchRequests() {
     return `<div class="card" style="margin-bottom:10px">
       <div class="card-header" style="flex-wrap:wrap;gap:8px">
         <div style="display:flex;align-items:flex-start;gap:10px">
-          ${isPending?`<input type="checkbox" style="margin-top:2px" onchange="toggleBatchItem('punch',${r.id},this.checked)">`:``}
+          ${isPending?`<input type="checkbox" class="batch-cb" data-cat="punch" data-id="${r.id}" style="margin-top:2px" onchange="toggleBatchItem('punch',${r.id},this.checked)">`:``}
           <div><span class="card-title">${escHtml(r.staff_name||'')}</span>${r.staff_role?`<span style="font-size:12px;color:var(--muted);margin-left:8px">${escHtml(r.staff_role)}</span>`:''}<div style="font-size:12px;color:var(--muted);margin-top:3px">申請時間：${created}</div></div></div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span style="font-size:12px;font-weight:700;color:${PREQ_COLOR[r.status]||'var(--muted)'}">${PREQ_LABEL[r.status]||r.status}</span>
@@ -3235,6 +3374,7 @@ function renderOTMonthlySummary(data) {
 async function loadOTRequests() {
   const status = document.getElementById('ot-filter-status').value;
   const month  = document.getElementById('ot-filter-month').value;
+  _persistFilters('ot-req', { ot_month:'ot-filter-month', ot_status:'ot-filter-status' });
   let url = '/api/overtime/requests?';
   if (status) url += `status=${status}&`; if (month) url += `month=${month}&`;
   const { ok, data } = await api(url, {}, true);
@@ -3252,7 +3392,7 @@ function renderOTRequests() {
     return `<div class="card" style="margin-bottom:10px">
       <div class="card-header" style="flex-wrap:wrap;gap:8px">
         <div style="display:flex;align-items:flex-start;gap:10px">
-          ${isOTPending?`<input type="checkbox" style="margin-top:2px" onchange="toggleBatchItem('ot',${r.id},this.checked)">`:``}
+          ${isOTPending?`<input type="checkbox" class="batch-cb" data-cat="ot" data-id="${r.id}" style="margin-top:2px" onchange="toggleBatchItem('ot',${r.id},this.checked)">`:``}
           <div><span class="card-title">${escHtml(r.staff_name||'')}</span>${r.staff_role?`<span style="font-size:12px;color:var(--muted);margin-left:8px">${escHtml(r.staff_role)}</span>`:''}<div style="font-size:12px;color:var(--muted);margin-top:3px">${r.request_date}　${r.start_time}～${r.end_time}　<strong>${r.ot_hours}小時</strong><span style="background:var(--bg);padding:1px 6px;border-radius:8px;margin-left:4px">${DAY_TYPE[r.day_type||'weekday']||r.day_type}</span></div></div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span style="font-size:12px;font-weight:700;color:${sc}">${sl}</span>
@@ -3772,6 +3912,7 @@ function initLeave() {
   const ym  = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
   if (!document.getElementById('leave-req-month').value) document.getElementById('leave-req-month').value = ym;
   if (!document.getElementById('leave-cal-month').value) document.getElementById('leave-cal-month').value = ym;
+  _restoreFilters('leave-req', { lr_month:'leave-req-month', lr_status:'leave-req-status', lr_staff:'leave-req-staff' });
   const yr = document.getElementById('leave-bal-year');
   if (!yr.options.length) {
     const y = now.getFullYear();
@@ -3807,6 +3948,7 @@ async function loadLeaveRequests() {
   const month  = document.getElementById('leave-req-month').value;
   const status = document.getElementById('leave-req-status').value;
   const staffId = document.getElementById('leave-req-staff').value;
+  _persistFilters('leave-req', { lr_month:'leave-req-month', lr_status:'leave-req-status', lr_staff:'leave-req-staff' });
   let url = '/api/leave/requests?';
   if (month)  url += `month=${month}&`;
   if (status) url += `status=${status}&`;
@@ -3828,7 +3970,7 @@ function renderLeaveRequests() {
     return `<div class="card" style="margin-bottom:10px">
       <div class="card-header" style="flex-wrap:wrap;gap:8px">
         <div style="display:flex;align-items:flex-start;gap:10px">
-          ${canReview?`<input type="checkbox" style="margin-top:3px" onchange="toggleBatchItem('leave',${r.id},this.checked)">`:``}
+          ${canReview?`<input type="checkbox" class="batch-cb" data-cat="leave" data-id="${r.id}" style="margin-top:3px" onchange="toggleBatchItem('leave',${r.id},this.checked)">`:``}
           <div>
           <span class="card-title">${escHtml(r.staff_name||'')}</span>
           ${r.staff_role?`<span style="font-size:12px;color:var(--muted);margin-left:8px">${escHtml(r.staff_role)}</span>`:''}
@@ -4300,14 +4442,36 @@ async function openSalDetail(id) {
       </table>
     </div>`;
   }
+  // 計算明細區塊
+  function _readableFormula(f, d) {
+    if (!f) return '';
+    return f
+      .replace(/base_salary/g,    `$${fmtNum(d.base_salary||0)}(底薪)`)
+      .replace(/insured_salary/g, `$${fmtNum(d.insured_salary||0)}(投保薪)`)
+      .replace(/service_years/g,  `${d.service_years||0}年資`)
+      .replace(/\*/g, '×').replace(/\//g, '÷');
+  }
+  let formulaBlock = '';
+  if (!isHourly) {
+    const ratio = data.work_days > 0 ? (data.actual_days / data.work_days * 100).toFixed(1) : 100;
+    formulaBlock = `<div style="margin-top:10px;padding:10px 14px;background:#f0f7ff;border-radius:8px;border:1px solid #c7dff7;font-size:12px">
+      <div style="font-weight:700;color:var(--accent);margin-bottom:6px">月薪制 計算邏輯</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px 20px;line-height:1.8">
+        <span><span style="color:var(--muted)">底薪：</span><strong>$${fmtNum(data.base_salary)}</strong></span>
+        <span><span style="color:var(--muted)">應出勤：</span><strong>${data.work_days} 天</strong></span>
+        <span><span style="color:var(--muted)">實際出勤：</span><strong>${data.actual_days} 天</strong></span>
+        ${data.leave_days>0?`<span><span style="color:var(--muted)">請假：</span><strong>${data.leave_days} 天</strong></span>`:''}
+        ${data.unpaid_days>0?`<span style="color:var(--red)"><span style="color:var(--muted)">無薪假：</span><strong>${data.unpaid_days} 天（日薪 $${fmtNum(Math.round((data.base_salary||0)/30))} × 天數扣款）</strong></span>`:''}
+        ${data.ot_pay>0?`<span style="color:var(--green)"><span style="color:var(--muted)">加班費：</span><strong>+$${fmtNum(data.ot_pay)}</strong></span>`:''}
+      </div>
+    </div>`;
+  }
   const leaveInfo = `<div style="font-size:12px;color:var(--muted);margin-top:4px">
     ${isHourly
-      ? `實際工時 ${data.actual_work_hours}h × 時薪 $${fmtNum(data.hourly_rate)} = $${fmtNum(data.hourly_base_pay)}`
-      : `出勤 ${data.actual_days} 天 / 工作日 ${data.work_days} 天`}
-    ${data.leave_days>0?` | 請假 ${data.leave_days} 天`:''}
-    ${data.unpaid_days>0?` | 無薪 ${data.unpaid_days} 天`:''}
-    ${data.ot_pay>0?` | 加班費 $${fmtNum(data.ot_pay)}`:''}
-  </div>${hourlyTable}`;
+      ? `時薪制：實際工時 <strong>${data.actual_work_hours}h</strong> × 時薪 <strong>$${fmtNum(data.hourly_rate)}</strong> = <strong style="color:var(--green)">$${fmtNum(data.hourly_base_pay)}</strong>`
+      : `月薪制：出勤 <strong>${data.actual_days}</strong> 天 / 應出勤 <strong>${data.work_days}</strong> 天`}
+    ${data.ot_pay>0?` &nbsp;|&nbsp; 加班費 <strong style="color:var(--green)">+$${fmtNum(data.ot_pay)}</strong>`:''}
+  </div>${formulaBlock}${hourlyTable}`;
   let html = `<div style="padding:16px 24px;background:var(--bg);border-bottom:1px solid var(--border)">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px">
       <div><span style="color:var(--muted)">職員代碼：</span><strong>${escHtml(data.employee_code||'—')}</strong></div>
@@ -4328,7 +4492,7 @@ async function openSalDetail(id) {
         <div style="font-size:12px;font-weight:700;color:var(--green);margin-bottom:8px">津貼項目</div>
         <table style="width:100%;font-size:12px;border-collapse:collapse">
           <tr style="background:var(--bg)"><th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--border)">項目</th><th style="padding:6px 8px;text-align:right;border-bottom:1px solid var(--border)">金額</th><th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--border)">說明</th></tr>
-          ${allowItems.map(it=>`<tr style="border-bottom:1px solid #f0f2f8"><td style="padding:5px 8px">${escHtml(it.name)}</td><td style="padding:5px 8px;text-align:right;font-family:'DM Mono',monospace;font-weight:600">${fmtNum(it.amount)}</td><td style="padding:5px 8px;color:var(--muted);font-size:11px">${escHtml(it.calc_note||'')}</td></tr>`).join('')}
+          ${allowItems.map(it=>`<tr style="border-bottom:1px solid #f0f2f8"><td style="padding:5px 8px">${escHtml(it.name)}</td><td style="padding:5px 8px;text-align:right;font-family:'DM Mono',monospace;font-weight:600">${fmtNum(it.amount)}</td><td style="padding:5px 8px;color:var(--muted);font-size:11px">${escHtml(_readableFormula(it.calc_note||'',data))}</td></tr>`).join('')}
           <tr style="background:var(--bg)"><td style="padding:7px 8px;font-weight:700" colspan="2">合計</td><td style="padding:7px 8px;text-align:right;font-family:'DM Mono',monospace;font-weight:700;color:var(--green)">${fmtNum(data.allowance_total)}</td></tr>
         </table>
       </div>
@@ -4336,7 +4500,7 @@ async function openSalDetail(id) {
         <div style="font-size:12px;font-weight:700;color:var(--red);margin-bottom:8px">扣除項目</div>
         <table style="width:100%;font-size:12px;border-collapse:collapse">
           <tr style="background:var(--bg)"><th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--border)">項目</th><th style="padding:6px 8px;text-align:right;border-bottom:1px solid var(--border)">金額</th><th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--border)">說明</th></tr>
-          ${deductItems.map(it=>`<tr style="border-bottom:1px solid #f0f2f8"><td style="padding:5px 8px">${escHtml(it.name)}</td><td style="padding:5px 8px;text-align:right;font-family:'DM Mono',monospace;font-weight:600">${fmtNum(it.amount)}</td><td style="padding:5px 8px;color:var(--muted);font-size:11px">${escHtml(it.calc_note||'')}</td></tr>`).join('')}
+          ${deductItems.map(it=>`<tr style="border-bottom:1px solid #f0f2f8"><td style="padding:5px 8px">${escHtml(it.name)}</td><td style="padding:5px 8px;text-align:right;font-family:'DM Mono',monospace;font-weight:600">${fmtNum(it.amount)}</td><td style="padding:5px 8px;color:var(--muted);font-size:11px">${escHtml(_readableFormula(it.calc_note||'',data))}</td></tr>`).join('')}
           <tr style="background:var(--bg)"><td style="padding:7px 8px;font-weight:700" colspan="2">合計</td><td style="padding:7px 8px;text-align:right;font-family:'DM Mono',monospace;font-weight:700;color:var(--red)">${fmtNum(data.deduction_total)}</td></tr>
         </table>
       </div>
