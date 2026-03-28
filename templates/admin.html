@@ -4809,9 +4809,8 @@ async function loadSalaryRecords() {
     if (r.salary_type==='hourly') {
       anomalyBadge = `<div style="font-family:'DM Mono',monospace;font-size:12px">${r.actual_work_hours||0}h</div>`;
     } else {
-      anomalyBadge = `<div style="font-size:12px">${r.actual_days||0}/${r.work_days||0}天`;
+      anomalyBadge = `<div style="font-size:12px">出勤 <strong>${r.actual_days||0}</strong>/${r.work_days||0}天`;
       if (r.leave_days>0) anomalyBadge += `<span style="color:var(--accent);margin-left:4px">假${r.leave_days}天</span>`;
-      if (unaccounted>0)  anomalyBadge += `<span style="color:var(--red);margin-left:4px;font-weight:700" title="疑似缺勤或補登">⚠ 缺${unaccounted}天</span>`;
       anomalyBadge += '</div>';
     }
     return `<tr${unaccounted>0?' style="background:rgba(214,66,66,0.04)"':''}>
@@ -4900,7 +4899,7 @@ async function openSalDetail(id) {
       <div style="display:flex;flex-wrap:wrap;gap:6px 20px;line-height:1.8">
         <span><span style="color:var(--muted)">底薪：</span><strong>$${fmtNum(data.base_salary)}</strong></span>
         <span><span style="color:var(--muted)">應出勤：</span><strong>${data.work_days} 天</strong></span>
-        <span><span style="color:var(--muted)">實際出勤：</span><strong>${data.actual_days} 天</strong></span>
+        <span><span style="color:var(--muted)">實際出勤：</span><strong>${data.actual_days} 天</strong><span style="color:var(--muted);font-size:10px;margin-left:3px">（排班−請假−缺勤）</span></span>
         ${data.leave_days>0?`<span><span style="color:var(--muted)">請假：</span><strong>${data.leave_days} 天</strong></span>`:''}
         ${data.unpaid_days>0?`<span style="color:var(--red)"><span style="color:var(--muted)">無薪假：</span><strong>${data.unpaid_days} 天（日薪 $${fmtNum(Math.round((data.base_salary||0)/30))} × 天數扣款）</strong></span>`:''}
         ${(data.absent_days||0)>0?`<span style="color:var(--red)"><span style="color:var(--muted)">缺勤：</span><strong>${data.absent_days} 天（-$${fmtNum(Math.round((data.base_salary||0)/30*(data.absent_days||0)))}）</strong></span>`:''}
@@ -4911,7 +4910,7 @@ async function openSalDetail(id) {
   const leaveInfo = `<div style="font-size:12px;color:var(--muted);margin-top:4px">
     ${isHourly
       ? `時薪制：實際工時 <strong>${data.actual_work_hours}h</strong> × 時薪 <strong>$${fmtNum(data.hourly_rate)}</strong> = <strong style="color:var(--green)">$${fmtNum(data.hourly_base_pay)}</strong>`
-      : `月薪制：出勤 <strong>${data.actual_days}</strong> 天 / 應出勤 <strong>${data.work_days}</strong> 天`}
+      : `月薪制：出勤 <strong>${data.actual_days}</strong> 天 / 應出勤 <strong>${data.work_days}</strong> 天${(data.absent_days||0)>0?' <span style="color:var(--red);font-size:11px">（缺勤 '+data.absent_days+' 天已扣款）</span>':''}`}
     ${data.ot_pay>0?` &nbsp;|&nbsp; 加班費 <strong style="color:var(--green)">+$${fmtNum(data.ot_pay)}</strong>`:''}
   </div>${formulaBlock}${hourlyTable}`;
   let html = `<div style="padding:16px 24px;background:var(--bg);border-bottom:1px solid var(--border)">

@@ -3713,7 +3713,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         'actual_work_hours':  actual_work_hours if salary_type == 'hourly' else 0,
         'insured_salary':     insured_salary,
         'work_days':          total_work_days,
-        'actual_days':        actual_days,
+        'actual_days':        max(0, actual_days - absent_days),
         'leave_days':         leave_days,
         'unpaid_days':        unpaid_days,
         'absent_days':        absent_days,
