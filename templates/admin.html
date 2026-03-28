@@ -5318,24 +5318,57 @@ async function doOcr() {
     try { data = await resp.json(); } catch { data = {}; }
     if (!resp.ok) { showToast(data.error||'OCR 失敗，請確認 API Key 是否設定','error'); btn.disabled=false; return; }
     finOcrResult = data;
-  // Render result fields
-  const fields = [
-    ['date',          '日期',     data.date||''],
-    ['vendor',        '廠商',     data.vendor||''],
-    ['invoice_no',    '發票號碼', data.invoice_no||''],
-    ['total_amount',  '含稅金額', data.total_amount||''],
-    ['tax_amount',    '稅額',     data.tax_amount||''],
-    ['pre_tax_amount','未稅金額', data.pre_tax_amount||''],
-    ['title',         '建議標題', data.title||''],
-    ['doc_type',      '文件類型', data.doc_type||''],
-  ];
-  document.getElementById('fin-ocr-fields').innerHTML = fields.map(([key,label,val])=>`
-    <div class="form-group">
-      <label class="form-label">${label}</label>
-      <input class="form-input" id="ocr-field-${key}" value="${escHtml(String(val))}">
-    </div>`).join('');
-    document.getElementById('fin-ocr-result-card').style.display='';
-    btn.disabled=false;
+    // 判斷預設類型
+    const defaultType = (data.doc_type==='income') ? 'income' : 'expense';
+    // 建立類別選項
+    const catOpts = (type) => finCatList
+      .filter(c=>c.active && c.type===type)
+      .map(c=>`<option value="${c.id}">${escHtml(c.name)}</option>`).join('');
+    document.getElementById('fin-ocr-fields').innerHTML = `
+      <div class="form-group">
+        <label class="form-label">收支類型 *</label>
+        <select class="form-input" id="ocr-field-type" onchange="updateOcrCatOpts()">
+          <option value="expense"${defaultType==='expense'?' selected':''}>支出</option>
+          <option value="income"${defaultType==='income'?' selected':''}>收入</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">類別</label>
+        <select class="form-input" id="ocr-field-category">
+          <option value="">— 請選擇 —</option>
+          ${catOpts(defaultType)}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">日期 *</label>
+        <input class="form-input" type="date" id="ocr-field-date" value="${escHtml(data.date||new Date().toISOString().slice(0,10))}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">標題 *</label>
+        <input class="form-input" id="ocr-field-title" value="${escHtml(data.title||data.vendor||'')}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">含稅金額 *</label>
+        <input class="form-input" type="number" min="0" step="1" id="ocr-field-total_amount" value="${escHtml(String(data.total_amount||''))}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">稅額</label>
+        <input class="form-input" type="number" min="0" step="1" id="ocr-field-tax_amount" value="${escHtml(String(data.tax_amount||'0'))}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">廠商 / 對象</label>
+        <input class="form-input" id="ocr-field-vendor" value="${escHtml(data.vendor||'')}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">發票 / 單據號碼</label>
+        <input class="form-input" id="ocr-field-invoice_no" value="${escHtml(data.invoice_no||'')}">
+      </div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label class="form-label">備註</label>
+        <input class="form-input" id="ocr-field-note" value="OCR辨識${data.doc_type?' - '+data.doc_type:''}">
+      </div>`;
+    document.getElementById('fin-ocr-result-card').style.display = '';
+    btn.disabled = false;
   } catch(e) {
     document.getElementById('fin-ocr-loading').style.display='none';
     showToast('OCR 失敗：' + e.message, 'error');
@@ -5349,19 +5382,31 @@ function resetOcr() {
   document.getElementById('fin-ocr-drop').style.borderColor = 'var(--border)';
   document.getElementById('fin-ocr-result-card').style.display = 'none';
 }
+function updateOcrCatOpts() {
+  const type = document.getElementById('ocr-field-type')?.value || 'expense';
+  const sel  = document.getElementById('ocr-field-category');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">— 請選擇 —</option>' +
+    finCatList.filter(c=>c.active && c.type===type)
+      .map(c=>`<option value="${c.id}">${escHtml(c.name)}</option>`).join('');
+}
 async function createRecordFromOcr() {
   if (!finOcrResult) return;
   const getF = id => document.getElementById('ocr-field-'+id)?.value||'';
+  const amount = parseFloat(getF('total_amount'));
+  if (!amount) { showToast('請填寫金額','error'); return; }
+  if (!getF('date')) { showToast('請填寫日期','error'); return; }
   const body = {
-    record_date: getF('date') || new Date().toISOString().slice(0,10),
-    type:        'expense',
-    title:       getF('title') || getF('vendor') || '未命名',
-    amount:      parseFloat(getF('total_amount'))||0,
-    tax_amount:  parseFloat(getF('tax_amount'))||0,
-    vendor:      getF('vendor'),
-    invoice_no:  getF('invoice_no'),
-    note:        `OCR辨識 - ${finOcrResult.doc_type||''}`,
-    document_id: finOcrResult.document_id||null,
+    record_date:  getF('date'),
+    type:         getF('type') || 'expense',
+    category_id:  getF('category') ? parseInt(getF('category')) : null,
+    title:        getF('title') || getF('vendor') || '未命名',
+    amount:       amount,
+    tax_amount:   parseFloat(getF('tax_amount'))||0,
+    vendor:       getF('vendor'),
+    invoice_no:   getF('invoice_no'),
+    note:         getF('note'),
+    document_id:  finOcrResult.document_id||null,
   };
   const {ok} = await api('/api/finance/records', {method:'POST', body:JSON.stringify(body)});
   if (!ok) return;
