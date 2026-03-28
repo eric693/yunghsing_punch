@@ -1049,19 +1049,23 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     <div id="fin-panel-ocr" style="display:none">
       <div style="max-width:700px">
         <div class="card" style="padding:20px;margin-bottom:16px">
-          <div class="card-title" style="padding:0;margin-bottom:12px">上傳發票 / 收據 / 報帳單</div>
-          <label for="fin-ocr-file" id="fin-ocr-drop"
-               style="display:block;border:2px dashed var(--border);border-radius:8px;padding:36px;text-align:center;cursor:pointer;transition:border-color .2s"
-               ondragover="event.preventDefault();this.style.borderColor='var(--green)'"
+          <div class="card-title" style="padding:0;margin-bottom:12px">AI 辨識發票 / 收據 / 報帳單</div>
+          <!-- 拖曳區（拖曳或點擊） -->
+          <div id="fin-ocr-drop"
+               style="border:2px dashed var(--border);border-radius:8px;padding:32px;text-align:center;cursor:pointer;transition:border-color .2s"
+               onclick="document.getElementById('fin-ocr-file').click()"
+               ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
                ondragleave="this.style.borderColor='var(--border)'"
                ondrop="handleOcrDrop(event)">
-            <div style="font-size:28px;margin-bottom:8px">🧾</div>
-            <div style="font-size:13px;color:var(--muted)">點擊上傳圖片（JPG、PNG、WEBP），或拖曳至此</div>
-            <div id="fin-ocr-filename" style="font-size:12px;color:var(--green);margin-top:6px"></div>
-          </label>
-          <input type="file" id="fin-ocr-file" accept="image/*" style="display:none" onchange="handleOcrFile(this.files[0])">
-          <button class="btn btn-primary" style="width:100%;margin-top:14px" id="fin-ocr-btn" onclick="doOcr()" disabled>AI OCR 辨識</button>
-          <div id="fin-ocr-loading" style="display:none;text-align:center;margin-top:12px;font-size:13px;color:var(--muted)">辨識中，請稍候...</div>
+            <div style="font-size:32px;margin-bottom:8px">🧾</div>
+            <div style="font-size:13px;color:var(--muted)">拖曳圖片到此，或點此選取</div>
+            <div id="fin-ocr-filename" style="font-size:12px;color:var(--green);margin-top:8px;font-weight:600"></div>
+          </div>
+          <input type="file" id="fin-ocr-file" accept="image/*,image/heic" style="display:none" onchange="handleOcrFile(this.files[0])">
+          <button class="btn btn-primary" style="width:100%;margin-top:14px;font-size:15px;padding:13px" id="fin-ocr-btn" onclick="doOcr()">AI OCR 辨識</button>
+          <div id="fin-ocr-loading" style="display:none;text-align:center;margin-top:14px;font-size:13px;color:var(--muted)">
+            <span style="display:inline-block;animation:spin 1s linear infinite;margin-right:6px">⏳</span>AI 辨識中，請稍候...
+          </div>
         </div>
         <!-- OCR 結果 -->
         <div class="card" id="fin-ocr-result-card" style="padding:20px;display:none">
@@ -5285,9 +5289,9 @@ let ocrFile = null;
 function handleOcrFile(file) {
   if (!file) return;
   ocrFile = file;
-  document.getElementById('fin-ocr-filename').textContent = '已選擇：' + file.name;
-  document.getElementById('fin-ocr-btn').disabled = false;
-  document.getElementById('fin-ocr-result-card').style.display='none';
+  document.getElementById('fin-ocr-filename').textContent = '✓ ' + file.name;
+  document.getElementById('fin-ocr-drop').style.borderColor = 'var(--green)';
+  document.getElementById('fin-ocr-result-card').style.display = 'none';
 }
 function handleOcrDrop(e) {
   e.preventDefault();
@@ -5295,7 +5299,13 @@ function handleOcrDrop(e) {
   handleOcrFile(e.dataTransfer.files[0]);
 }
 async function doOcr() {
-  if (!ocrFile) { showToast('請先選擇圖片','error'); return; }
+  if (!ocrFile) {
+    // 尚未選檔 → 打開選檔視窗，選完後自動辨識
+    const input = document.getElementById('fin-ocr-file');
+    input.onchange = e => { if (e.target.files[0]) { handleOcrFile(e.target.files[0]); doOcr(); } };
+    input.click();
+    return;
+  }
   const btn = document.getElementById('fin-ocr-btn');
   btn.disabled = true;
   document.getElementById('fin-ocr-loading').style.display = '';
@@ -5333,11 +5343,11 @@ async function doOcr() {
   }
 }
 function resetOcr() {
-  ocrFile=null; finOcrResult=null;
-  document.getElementById('fin-ocr-file').value='';
-  document.getElementById('fin-ocr-filename').textContent='';
-  document.getElementById('fin-ocr-btn').disabled=true;
-  document.getElementById('fin-ocr-result-card').style.display='none';
+  ocrFile = null; finOcrResult = null;
+  document.getElementById('fin-ocr-file').value = '';
+  document.getElementById('fin-ocr-filename').textContent = '';
+  document.getElementById('fin-ocr-drop').style.borderColor = 'var(--border)';
+  document.getElementById('fin-ocr-result-card').style.display = 'none';
 }
 async function createRecordFromOcr() {
   if (!finOcrResult) return;
