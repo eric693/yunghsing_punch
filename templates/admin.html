@@ -1050,16 +1050,16 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
       <div style="max-width:700px">
         <div class="card" style="padding:20px;margin-bottom:16px">
           <div class="card-title" style="padding:0;margin-bottom:12px">上傳發票 / 收據 / 報帳單</div>
-          <div id="fin-ocr-drop" style="border:2px dashed var(--border);border-radius:8px;padding:36px;text-align:center;cursor:pointer;transition:border-color .2s"
-               onclick="document.getElementById('fin-ocr-file').click()"
+          <label for="fin-ocr-file" id="fin-ocr-drop"
+               style="display:block;border:2px dashed var(--border);border-radius:8px;padding:36px;text-align:center;cursor:pointer;transition:border-color .2s"
                ondragover="event.preventDefault();this.style.borderColor='var(--green)'"
                ondragleave="this.style.borderColor='var(--border)'"
                ondrop="handleOcrDrop(event)">
             <div style="font-size:28px;margin-bottom:8px">🧾</div>
             <div style="font-size:13px;color:var(--muted)">點擊上傳圖片（JPG、PNG、WEBP），或拖曳至此</div>
             <div id="fin-ocr-filename" style="font-size:12px;color:var(--green);margin-top:6px"></div>
-            <input type="file" id="fin-ocr-file" accept="image/*" style="display:none" onchange="handleOcrFile(this.files[0])">
-          </div>
+          </label>
+          <input type="file" id="fin-ocr-file" accept="image/*" style="display:none" onchange="handleOcrFile(this.files[0])">
           <button class="btn btn-primary" style="width:100%;margin-top:14px" id="fin-ocr-btn" onclick="doOcr()" disabled>AI OCR 辨識</button>
           <div id="fin-ocr-loading" style="display:none;text-align:center;margin-top:12px;font-size:13px;color:var(--muted)">辨識中，請稍候...</div>
         </div>
@@ -1082,6 +1082,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <button class="btn btn-primary btn-sm" onclick="loadStatements()">產生報表</button>
         <span style="flex:1"></span>
         <button class="btn btn-outline btn-sm" id="fin-stmt-dl-btn" style="display:none" onclick="downloadStatements()">下載 Excel (.xlsx)</button>
+        <button class="btn btn-outline btn-sm" id="fin-stmt-pdf-btn" style="display:none" onclick="printStatements()">列印 / 匯出 PDF</button>
       </div>
       <div id="fin-stmt-tabs" style="display:none">
         <div style="display:flex;gap:6px;margin-bottom:14px">
@@ -5131,6 +5132,7 @@ async function loadStatements() {
 
   document.getElementById('fin-stmt-tabs').style.display = '';
   document.getElementById('fin-stmt-dl-btn').style.display = '';
+  document.getElementById('fin-stmt-pdf-btn').style.display = '';
   switchStmtTab('is');
 }
 function downloadStatements() {
@@ -5138,6 +5140,126 @@ function downloadStatements() {
   if (!m) return;
   const [year, mon] = m.split('-');
   window.open(`/api/finance/export/statements/${year}/${mon}`, '_blank');
+}
+function printStatements() {
+  if (!stmtData) return;
+  const d = stmtData;
+  const IS = d.income_statement, BS = d.balance_sheet, CF = d.cash_flow;
+  const ry = d.roc_year, mo = d.month, ld = d.last_day, co = d.company_name;
+
+  const css = `
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'標楷體','DFKai-SB','BiauKai','Noto Serif TC',serif;font-size:11pt;color:#000;background:#fff}
+    .page{max-width:680px;margin:0 auto;padding:24mm 18mm;page-break-after:always}
+    .page:last-child{page-break-after:avoid}
+    h1{font-size:14pt;font-weight:bold;text-align:center;margin-bottom:2px}
+    h2{font-size:13pt;font-weight:bold;text-align:center;margin-bottom:2px}
+    .date-line{font-size:11pt;text-align:center;margin-bottom:14px}
+    table{width:100%;border-collapse:collapse;margin-top:6px}
+    th{font-size:10pt;padding:5px 10px;border-bottom:2px solid #000;text-align:left}
+    th:last-child{text-align:right}
+    td{padding:4px 10px;font-size:11pt}
+    td:last-child{text-align:right;font-family:'Courier New',monospace;font-size:10.5pt}
+    .bold td{font-weight:bold}
+    .sep td{border-top:1px solid #666}
+    .sep2 td{border-top:1px solid #000;border-bottom:3px double #000}
+    .spacer td{padding:3px 0}
+    @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+    @page{size:A4;margin:10mm}
+  `;
+
+  const n = v => {
+    if(v===null||v===undefined) return '';
+    const s = Math.abs(v).toLocaleString('zh-TW',{minimumFractionDigits:0,maximumFractionDigits:0});
+    return v<0?`(${s})`:s;
+  };
+  const r = (label,amount,cls='')=>`<tr class="${cls}"><td>${label}</td><td>${amount===''||amount===undefined?'':n(amount)}</td></tr>`;
+  const sp = ()=>`<tr class="spacer"><td colspan="2"></td></tr>`;
+
+  const isHtml = `<div class="page">
+    <h1>${escHtml(co)}</h1><h2>損益表</h2><div class="date-line">中華民國${ry}年${mo}月份</div>
+    <table><thead><tr><th>項目</th><th>金額（元）</th></tr></thead><tbody>
+    ${r('一、營業收入','','bold')}
+    ${IS.operating_revenue_lines.map(l=>`<td style="padding-left:2em">${escHtml(l.name)}</td><td>${n(l.amount)}</td>`).map(s=>`<tr>${s}</tr>`).join('')}
+    ${r('　　營業收入合計',IS.operating_revenue,'bold sep')}
+    ${sp()}
+    ${r('二、營業成本','','bold')}
+    ${IS.cogs_lines.map(l=>`<tr><td style="padding-left:2em">${escHtml(l.name)}</td><td>${n(l.amount)}</td></tr>`).join('')}
+    ${r('　　營業成本合計',IS.cogs,'bold sep')}
+    ${r('　　毛利',IS.gross_profit,'bold sep')}
+    ${sp()}
+    ${r('三、營業費用','','bold')}
+    ${IS.operating_expense_lines.map(l=>`<tr><td style="padding-left:2em">${escHtml(l.name)}</td><td>${n(l.amount)}</td></tr>`).join('')}
+    ${r('　　營業費用合計',IS.operating_expense,'bold sep')}
+    ${r('　　營業利益（損失）',IS.operating_income,'bold sep')}
+    ${sp()}
+    ${IS.other_revenue||IS.other_revenue_lines.length?`
+      ${r('四、營業外收入','','bold')}
+      ${IS.other_revenue_lines.map(l=>`<tr><td style="padding-left:2em">${escHtml(l.name)}</td><td>${n(l.amount)}</td></tr>`).join('')}
+      ${r('　　營業外收入合計',IS.other_revenue,'bold sep')}${sp()}`:''}
+    ${IS.other_expense||IS.other_expense_lines.length?`
+      ${r('五、營業外費用','','bold')}
+      ${IS.other_expense_lines.map(l=>`<tr><td style="padding-left:2em">${escHtml(l.name)}</td><td>${n(l.amount)}</td></tr>`).join('')}
+      ${r('　　營業外費用合計',IS.other_expense,'bold sep')}${sp()}`:''}
+    ${r('本期淨利（損）',IS.net_income,'bold sep2')}
+    </tbody></table></div>`;
+
+  const bsHtml = `<div class="page">
+    <h1>${escHtml(co)}</h1><h2>資產負債表</h2><div class="date-line">中華民國${ry}年${mo}月${ld}日</div>
+    <table><thead><tr><th>項目</th><th>金額（元）</th></tr></thead><tbody>
+    ${r('【資　產】','','bold')}
+    ${r('　流動資產','','bold')}
+    <tr><td style="padding-left:3em">現金及約當現金</td><td>${n(BS.cash)}</td></tr>
+    ${r('　資產合計',BS.total_assets,'bold sep')}
+    ${sp()}
+    ${r('【負　債】','','bold')}
+    ${r('　流動負債','','bold')}
+    <tr><td style="padding-left:3em">應付帳款</td><td>${n(0)}</td></tr>
+    ${r('　負債合計',BS.total_liabilities,'bold sep')}
+    ${sp()}
+    ${r('【股東權益】','','bold')}
+    <tr><td style="padding-left:3em">資本額</td><td>${n(BS.opening_equity)}</td></tr>
+    <tr><td style="padding-left:3em">保留盈餘</td><td>${n(BS.retained_earnings)}</td></tr>
+    ${r('　股東權益合計',BS.total_equity,'bold sep')}
+    ${sp()}
+    ${r('負債及股東權益合計',BS.total_liabilities_equity,'bold sep2')}
+    </tbody></table></div>`;
+
+  const cfHtml = `<div class="page">
+    <h1>${escHtml(co)}</h1><h2>現金流量表（直接法）</h2><div class="date-line">中華民國${ry}年${mo}月份</div>
+    <table><thead><tr><th>項目</th><th>金額（元）</th></tr></thead><tbody>
+    ${r('一、營業活動之現金流量','','bold')}
+    ${r('　（一）收現收入','','bold')}
+    ${CF.operating_inflow_lines.map(l=>`<tr><td style="padding-left:4em">${escHtml(l.name)}</td><td>${n(l.amount)}</td></tr>`).join('')}
+    ${r('　　　收現合計',CF.operating_inflow,'bold sep')}
+    ${sp()}
+    ${r('　（二）付現費用','','bold')}
+    ${CF.operating_outflow_lines.map(l=>`<tr><td style="padding-left:4em">${escHtml(l.name)}</td><td>${n(-l.amount)}</td></tr>`).join('')}
+    ${r('　　　付現合計',-CF.operating_outflow,'bold sep')}
+    ${sp()}
+    ${r('　　營業活動淨現金流量',CF.operating_net,'bold sep')}
+    ${sp()}
+    ${r('二、投資活動之現金流量','','bold')}
+    ${r('　　投資活動淨現金流量',CF.investing_net,'bold sep')}
+    ${sp()}
+    ${r('三、籌資活動之現金流量','','bold')}
+    ${r('　　籌資活動淨現金流量',CF.financing_net,'bold sep')}
+    ${sp()}
+    ${r('四、本期現金增減',CF.net_change,'bold sep')}
+    ${r('五、期初現金及約當現金',CF.opening_cash,'bold')}
+    ${r('六、期末現金及約當現金',CF.closing_cash,'bold sep2')}
+    </tbody></table></div>`;
+
+  const win = window.open('','_blank','width=800,height=900');
+  win.document.write(`\x3c!DOCTYPE html\x3e\x3chtml lang="zh-TW"\x3e\x3chead\x3e
+    \x3cmeta charset="UTF-8"\x3e
+    \x3ctitle\x3e財務報表 ${ry}年${mo}月\x3c/title\x3e
+    \x3cstyle\x3e${css}\x3c/style\x3e
+    \x3c/head\x3e\x3cbody\x3e
+    ${isHtml}${bsHtml}${cfHtml}
+    \x3cscript\x3ewindow.onload=()=>window.print();\x3c/script\x3e
+    \x3c/body\x3e\x3c/html\x3e`);
+  win.document.close();
 }
 
 // ── 財務設定 ───────────────────────────────────────────────────
@@ -5173,17 +5295,19 @@ function handleOcrDrop(e) {
   handleOcrFile(e.dataTransfer.files[0]);
 }
 async function doOcr() {
-  if (!ocrFile) return;
+  if (!ocrFile) { showToast('請先選擇圖片','error'); return; }
   const btn = document.getElementById('fin-ocr-btn');
-  btn.disabled=true;
-  document.getElementById('fin-ocr-loading').style.display='';
-  document.getElementById('fin-ocr-result-card').style.display='none';
-  const fd = new FormData(); fd.append('file', ocrFile);
-  const resp = await fetch('/api/finance/ocr', {method:'POST', body:fd});
-  document.getElementById('fin-ocr-loading').style.display='none';
-  const data = await resp.json();
-  if (!resp.ok) { showToast(data.error||'OCR 失敗','error'); btn.disabled=false; return; }
-  finOcrResult = data;
+  btn.disabled = true;
+  document.getElementById('fin-ocr-loading').style.display = '';
+  document.getElementById('fin-ocr-result-card').style.display = 'none';
+  try {
+    const fd = new FormData(); fd.append('file', ocrFile);
+    const resp = await fetch('/api/finance/ocr', {method:'POST', body:fd});
+    document.getElementById('fin-ocr-loading').style.display = 'none';
+    let data;
+    try { data = await resp.json(); } catch { data = {}; }
+    if (!resp.ok) { showToast(data.error||'OCR 失敗，請確認 API Key 是否設定','error'); btn.disabled=false; return; }
+    finOcrResult = data;
   // Render result fields
   const fields = [
     ['date',          '日期',     data.date||''],
@@ -5200,8 +5324,13 @@ async function doOcr() {
       <label class="form-label">${label}</label>
       <input class="form-input" id="ocr-field-${key}" value="${escHtml(String(val))}">
     </div>`).join('');
-  document.getElementById('fin-ocr-result-card').style.display='';
-  btn.disabled=false;
+    document.getElementById('fin-ocr-result-card').style.display='';
+    btn.disabled=false;
+  } catch(e) {
+    document.getElementById('fin-ocr-loading').style.display='none';
+    showToast('OCR 失敗：' + e.message, 'error');
+    btn.disabled=false;
+  }
 }
 function resetOcr() {
   ocrFile=null; finOcrResult=null;
