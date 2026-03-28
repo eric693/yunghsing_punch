@@ -714,12 +714,14 @@ def api_punch_staff_create():
     if not username: return jsonify({'error': '帳號為必填'}), 400
     if not password or len(password) < 4:
         return jsonify({'error': '密碼至少 4 個字元'}), 400
+    employee_code = b.get('employee_code', '') or None
+    if employee_code: employee_code = employee_code.strip() or None
     try:
         with get_db() as conn:
             row = conn.execute("""
-                INSERT INTO punch_staff (name, username, password_hash, role)
-                VALUES (%s,%s,%s,%s) RETURNING *
-            """, (name, username, _hash_pw(password), b.get('role', '').strip())).fetchone()
+                INSERT INTO punch_staff (name, username, password_hash, role, employee_code)
+                VALUES (%s,%s,%s,%s,%s) RETURNING *
+            """, (name, username, _hash_pw(password), b.get('role', '').strip(), employee_code)).fetchone()
         return jsonify(punch_staff_row(row)), 201
     except psycopg.errors.UniqueViolation:
         return jsonify({'error': '姓名或帳號已存在，請換一個'}), 409
@@ -733,12 +735,14 @@ def api_punch_staff_create():
 @app.route('/api/punch/staff/<int:sid>', methods=['PUT'])
 @login_required
 def api_punch_staff_update(sid):
-    b        = request.get_json(force=True)
-    name     = b.get('name', '').strip()
-    username = b.get('username', '').strip()
-    password = b.get('password', '').strip()
-    role     = b.get('role', '').strip()
-    active   = bool(b.get('active', True))
+    b             = request.get_json(force=True)
+    name          = b.get('name', '').strip()
+    username      = b.get('username', '').strip()
+    password      = b.get('password', '').strip()
+    role          = b.get('role', '').strip()
+    active        = bool(b.get('active', True))
+    employee_code = b.get('employee_code', '') or None
+    if employee_code: employee_code = employee_code.strip() or None
     if not name or not username:
         return jsonify({'error': '姓名和帳號為必填'}), 400
     with get_db() as conn:
@@ -747,15 +751,15 @@ def api_punch_staff_update(sid):
                 return jsonify({'error': '密碼至少 4 個字元'}), 400
             row = conn.execute("""
                 UPDATE punch_staff
-                SET name=%s,username=%s,password_hash=%s,role=%s,active=%s
+                SET name=%s,username=%s,password_hash=%s,role=%s,active=%s,employee_code=%s
                 WHERE id=%s RETURNING *
-            """, (name, username, _hash_pw(password), role, active, sid)).fetchone()
+            """, (name, username, _hash_pw(password), role, active, employee_code, sid)).fetchone()
         else:
             row = conn.execute("""
                 UPDATE punch_staff
-                SET name=%s,username=%s,role=%s,active=%s
+                SET name=%s,username=%s,role=%s,active=%s,employee_code=%s
                 WHERE id=%s RETURNING *
-            """, (name, username, role, active, sid)).fetchone()
+            """, (name, username, role, active, employee_code, sid)).fetchone()
     return jsonify(punch_staff_row(row)) if row else ('', 404)
 
 @app.route('/api/punch/staff/<int:sid>', methods=['DELETE'])

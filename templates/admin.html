@@ -454,8 +454,8 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
       <div class="card">
         <div class="table-wrap">
           <table>
-            <thead><tr><th>姓名</th><th>職稱</th><th>帳號</th><th>狀態</th><th>操作</th></tr></thead>
-            <tbody id="punch-staff-tbody"><tr><td colspan="5" class="empty-state"><div class="empty-state-text">載入中...</div></td></tr></tbody>
+            <thead><tr><th>姓名</th><th>員工代碼</th><th>職稱</th><th>帳號</th><th>狀態</th><th>操作</th></tr></thead>
+            <tbody id="punch-staff-tbody"><tr><td colspan="6" class="empty-state"><div class="empty-state-text">載入中...</div></td></tr></tbody>
           </table>
         </div>
       </div>
@@ -948,11 +948,14 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
       <input type="hidden" id="psm-id">
       <div class="form-row">
         <div><label class="form-label">姓名 *</label><input class="form-input" id="psm-name" placeholder="顯示名稱"></div>
+        <div><label class="form-label">員工代碼</label><input class="form-input" id="psm-code" placeholder="例：EMP001"></div>
+      </div>
+      <div class="form-row">
         <div><label class="form-label">職稱</label><input class="form-input" id="psm-role" placeholder="例：外場、廚房"></div>
+        <div><label class="form-label">狀態</label><select class="form-input" id="psm-active"><option value="1">在職</option><option value="0">停用</option></select></div>
       </div>
       <div class="form-row">
         <div><label class="form-label">登入帳號 *</label><input class="form-input" id="psm-username" placeholder="英文或數字" autocapitalize="none"></div>
-        <div><label class="form-label">狀態</label><select class="form-input" id="psm-active"><option value="1">在職</option><option value="0">停用</option></select></div>
       </div>
       <div class="form-row">
         <div><label class="form-label">密碼 *</label><input class="form-input" id="psm-password" placeholder="至少 4 個字元" type="password"><div style="font-size:11px;color:var(--muted);margin-top:4px" id="psm-pw-hint">新增員工請輸入密碼</div></div>
@@ -2278,6 +2281,7 @@ async function loadPunchStaff() {
   if (!punchStaffList.length) { tb.innerHTML = '<tr><td colspan="5" class="empty-state"><div class="empty-state-text">尚無員工</div></td></tr>'; return; }
   tb.innerHTML = punchStaffList.map(s => `<tr>
     <td style="font-weight:600">${escHtml(s.name)}</td>
+    <td style="font-family:'DM Mono',monospace;font-size:12px;color:var(--muted)">${escHtml(s.employee_code||'—')}</td>
     <td style="color:var(--muted)">${escHtml(s.role||'')}</td>
     <td style="font-family:'DM Mono',monospace;font-size:12px">${escHtml(s.username||'—')}</td>
     <td>${s.active ? '<span class="badge badge-ok">在職</span>' : '<span class="badge badge-warn">停用</span>'}</td>
@@ -2296,12 +2300,13 @@ function openPunchStaffModal(id=null) {
     const s = punchStaffList.find(x => x.id === id); if (!s) return;
     document.getElementById('psm-id').value       = s.id;
     document.getElementById('psm-name').value     = s.name;
+    document.getElementById('psm-code').value     = s.employee_code || '';
     document.getElementById('psm-role').value     = s.role || '';
     document.getElementById('psm-username').value = s.username || '';
     document.getElementById('psm-active').value   = s.active ? '1' : '0';
     document.getElementById('psm-pw-hint').textContent = '留空表示不修改密碼';
   } else {
-    ['psm-id','psm-name','psm-role','psm-username'].forEach(i => document.getElementById(i).value = '');
+    ['psm-id','psm-name','psm-code','psm-role','psm-username'].forEach(i => document.getElementById(i).value = '');
     document.getElementById('psm-active').value = '1';
     document.getElementById('psm-pw-hint').textContent = '新增員工請輸入密碼';
   }
@@ -2315,11 +2320,12 @@ async function savePunchStaff() {
   if (pw && pw !== pw2)  { showToast('兩次密碼不一致', 'error'); return; }
   if (!id && !pw)        { showToast('請設定密碼', 'error'); return; }
   const body = {
-    name:     document.getElementById('psm-name').value.trim(),
-    username: document.getElementById('psm-username').value.trim(),
-    role:     document.getElementById('psm-role').value.trim(),
-    password: pw,
-    active:   document.getElementById('psm-active').value === '1'
+    name:          document.getElementById('psm-name').value.trim(),
+    employee_code: document.getElementById('psm-code').value.trim() || null,
+    username:      document.getElementById('psm-username').value.trim(),
+    role:          document.getElementById('psm-role').value.trim(),
+    password:      pw,
+    active:        document.getElementById('psm-active').value === '1'
   };
   if (!body.name)     { showToast('請填寫姓名', 'error'); return; }
   if (!body.username) { showToast('請填寫帳號', 'error'); return; }
