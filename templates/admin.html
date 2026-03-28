@@ -205,6 +205,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     <a href="#" class="nav-item"        id="nav-holiday" onclick="showPage('holiday',event)">國定假日</a>
     <a href="#" class="nav-item"        id="nav-finance" onclick="showPage('finance',event)">財務管理</a>
     <a href="#" class="nav-item"        id="nav-expense-review" onclick="showPage('expense-review',event)">費用審核<span class="nav-badge" id="badge-expense-review" style="display:none"></span></a>
+    <a href="#" class="nav-item"        id="nav-perf" onclick="showPage('perf',event)">績效考核</a>
     <a href="#" class="nav-item"        id="nav-adminmgr" onclick="showPage('adminmgr',event)" style="display:none">帳號管理</a>
   </nav>
   <div class="sidebar-bottom">
@@ -1442,6 +1443,99 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
       </div>
     </div>
   </div><!-- end page-expense-review -->
+
+  <!-- ── 績效考核 ── -->
+  <div class="page" id="page-perf" style="display:none">
+    <div style="margin-bottom:16px">
+      <div class="tab-bar" id="perf-tab-bar">
+        <button class="tab-btn active" onclick="switchPerfTab('reviews')">考核記錄</button>
+        <button class="tab-btn" onclick="switchPerfTab('new')">新增考核</button>
+        <button class="tab-btn" onclick="switchPerfTab('templates')">考核範本</button>
+      </div>
+    </div>
+
+    <!-- 考核記錄 tab -->
+    <div id="perf-panel-reviews">
+      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+        <select id="perf-filter-staff" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;min-width:140px">
+          <option value="">全部員工</option>
+        </select>
+        <input type="month" id="perf-filter-period" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px">
+        <button class="btn btn-primary" onclick="loadPerfReviews()" style="padding:6px 14px;font-size:13px">查詢</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>員工</th><th>考核期間</th><th>範本</th>
+            <th style="text-align:right">分數</th><th>等級</th>
+            <th>備註</th><th>考核人</th><th>考核日期</th>
+            <th>薪資調整</th><th>操作</th>
+          </tr></thead>
+          <tbody id="perf-reviews-tbody">
+            <tr><td colspan="10" class="empty-state"><div class="empty-state-text">載入中...</div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div><!-- end perf-panel-reviews -->
+
+    <!-- 新增考核 tab -->
+    <div id="perf-panel-new" style="display:none">
+      <div style="max-width:640px;background:#fff;border:1px solid var(--border);border-radius:10px;padding:24px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+          <div>
+            <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;margin-bottom:4px">員工</label>
+            <select id="pf-staff" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:7px;font-size:14px">
+              <option value="">選擇員工</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;margin-bottom:4px">考核範本</label>
+            <select id="pf-template" onchange="loadPerfTemplateItems()" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:7px;font-size:14px">
+              <option value="">選擇範本</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;margin-bottom:4px">考核期間</label>
+            <input type="month" id="pf-period" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:7px;font-size:14px">
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;margin-bottom:4px">考核人</label>
+            <input type="text" id="pf-reviewer" placeholder="考核人姓名" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:7px;font-size:14px">
+          </div>
+        </div>
+        <div id="pf-items-section" style="margin-bottom:14px;display:none">
+          <label style="display:block;font-size:12px;font-weight:600;color:var(--text);margin-bottom:8px">評分項目</label>
+          <div id="pf-items-list"></div>
+          <div style="display:flex;justify-content:flex-end;margin-top:8px;font-size:13px;color:var(--muted)">
+            總分：<span id="pf-score-display" style="font-weight:700;color:var(--navy);margin-left:4px">0</span> / <span id="pf-max-display">0</span>
+            &nbsp;→&nbsp; 等級：<span id="pf-grade-display" style="font-weight:700;color:var(--accent)">-</span>
+          </div>
+        </div>
+        <div style="margin-bottom:14px">
+          <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;margin-bottom:4px">備註</label>
+          <textarea id="pf-comments" rows="3" placeholder="考核備註（可選）" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:7px;font-size:14px;resize:vertical"></textarea>
+        </div>
+        <button class="btn btn-primary" onclick="submitPerfReview()">送出考核</button>
+      </div>
+    </div><!-- end perf-panel-new -->
+
+    <!-- 考核範本 tab -->
+    <div id="perf-panel-templates" style="display:none">
+      <div style="display:flex;gap:8px;margin-bottom:14px">
+        <button class="btn btn-primary" onclick="openPerfTemplateModal()">+ 新增範本</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>範本名稱</th><th>說明</th><th>考核週期</th><th>項目數</th><th>狀態</th><th>操作</th>
+          </tr></thead>
+          <tbody id="perf-templates-tbody">
+            <tr><td colspan="6" class="empty-state"><div class="empty-state-text">載入中...</div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div><!-- end perf-panel-templates -->
+  </div><!-- end page-perf -->
 
 
 </main>
@@ -3127,10 +3221,10 @@ function showPage(page, e) {
   const navEl = document.getElementById('nav-' + page);
   if (navEl) navEl.classList.add('active');
   setTimeout(refreshBadges, 600);
-  ['dash','punch','sched','leave','salary','ann','holiday','finance','adminmgr','expense-review'].forEach(p =>
+  ['dash','punch','sched','leave','salary','ann','holiday','finance','adminmgr','expense-review','perf'].forEach(p =>
     document.getElementById('page-' + p).style.display = p === page ? '' : 'none'
   );
-  const titles = { dash:'儀表板', punch:'打卡管理', sched:'排班管理', leave:'請假管理', salary:'薪資管理', ann:'公告管理', holiday:'國定假日', finance:'財務管理', adminmgr:'帳號管理', 'expense-review':'費用審核' };
+  const titles = { dash:'儀表板', punch:'打卡管理', sched:'排班管理', leave:'請假管理', salary:'薪資管理', ann:'公告管理', holiday:'國定假日', finance:'財務管理', adminmgr:'帳號管理', 'expense-review':'費用審核', perf:'績效考核' };
   document.getElementById('page-title').textContent = titles[page] || page;
   if (page === 'dash')            initDash();
   if (page === 'punch')           initPunch();
@@ -3142,6 +3236,7 @@ function showPage(page, e) {
   if (page === 'finance')         initFinance();
   if (page === 'adminmgr')        loadAdminAccounts();
   if (page === 'expense-review')  loadExpenseReview();
+  if (page === 'perf')            initPerf();
 }
 
 // ── Toast ─────────────────────────────────────────────────────
@@ -7673,6 +7768,315 @@ function promptRejectExpense(id) {
   const note = prompt('拒絕原因（選填）', '');
   if (note === null) return; // cancelled
   reviewExpense(id, 'reject', note);
+}
+
+// ══════════════════════════════════════════════════════════════
+// 績效考核模組
+// ══════════════════════════════════════════════════════════════
+let _perfTemplates = [];
+let _perfTemplateModal = null;
+
+function switchPerfTab(tab) {
+  ['reviews','new','templates'].forEach(t => {
+    document.getElementById('perf-panel-' + t).style.display = t === tab ? '' : 'none';
+  });
+  document.querySelectorAll('#perf-tab-bar .tab-btn').forEach((btn, i) => {
+    btn.classList.toggle('active', ['reviews','new','templates'][i] === tab);
+  });
+  if (tab === 'reviews')   loadPerfReviews();
+  if (tab === 'new')       initPerfNewForm();
+  if (tab === 'templates') loadPerfTemplates();
+}
+
+async function initPerf() {
+  switchPerfTab('reviews');
+}
+
+// ── 考核記錄 ──────────────────────────────────────────────────
+async function loadPerfReviews() {
+  const tbody = document.getElementById('perf-reviews-tbody');
+  if (!tbody) return;
+  const staffId = document.getElementById('perf-filter-staff')?.value || '';
+  const period  = document.getElementById('perf-filter-period')?.value || '';
+  let url = '/api/performance/reviews?';
+  if (staffId) url += `staff_id=${staffId}&`;
+  if (period)  url += `period=${period}&`;
+  const data = await api(url);
+  if (!data.ok) { tbody.innerHTML = '<tr><td colspan="10" class="empty-state"><div class="empty-state-text">載入失敗</div></td></tr>'; return; }
+  const rows = await data.json();
+  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="10" class="empty-state"><div class="empty-state-text">暫無考核記錄</div></td></tr>'; return; }
+  const gradeColor = {A:'var(--green)',B:'var(--accent)',C:'#e07b2a',D:'var(--red)'};
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${escHtml(r.staff_name||'')}</td>
+      <td>${escHtml(r.period_label||'')}</td>
+      <td>${escHtml(r.template_name||'')}</td>
+      <td style="text-align:right;font-weight:600">${r.total_score||0} / ${r.max_score||0}</td>
+      <td><span style="font-weight:700;color:${gradeColor[r.grade]||'var(--text)'}">${escHtml(r.grade||'-')}</span></td>
+      <td style="max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(r.comments||'')}</td>
+      <td>${escHtml(r.reviewer||'')}</td>
+      <td>${r.reviewed_at ? r.reviewed_at.slice(0,10) : ''}</td>
+      <td>${r.salary_adjusted ? `<span style="color:var(--green)">+${Number(r.salary_delta||0).toLocaleString()}</span>` : '未調整'}</td>
+      <td>
+        <button class="btn" style="font-size:12px;padding:3px 8px" onclick="openAdjustSalaryModal(${r.id},'${escHtml(r.staff_name||'')}',${r.salary_adjusted?1:0})">薪資調整</button>
+      </td>
+    </tr>`).join('');
+}
+
+// ── 新增考核 ──────────────────────────────────────────────────
+async function initPerfNewForm() {
+  // 填充員工選單
+  const staffSel = document.getElementById('pf-staff');
+  if (staffSel && staffSel.options.length <= 1) {
+    const d = await api('/api/punch/staff');
+    if (d.ok) {
+      const list = await d.json();
+      staffSel.innerHTML = '<option value="">選擇員工</option>' +
+        list.filter(s=>s.active).map(s=>`<option value="${s.id}">${escHtml(s.name)}</option>`).join('');
+    }
+  }
+  // 填充範本選單
+  const tmplSel = document.getElementById('pf-template');
+  if (tmplSel && tmplSel.options.length <= 1) {
+    await _loadPerfTemplateOptions();
+  }
+  // 預設本月
+  const periodEl = document.getElementById('pf-period');
+  if (periodEl && !periodEl.value) {
+    const now = new Date();
+    periodEl.value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  }
+  // 也填充考核記錄頁面的員工篩選
+  const filterStaff = document.getElementById('perf-filter-staff');
+  if (filterStaff && filterStaff.options.length <= 1) {
+    const d2 = await api('/api/punch/staff');
+    if (d2.ok) {
+      const list2 = await d2.json();
+      filterStaff.innerHTML = '<option value="">全部員工</option>' +
+        list2.filter(s=>s.active).map(s=>`<option value="${s.id}">${escHtml(s.name)}</option>`).join('');
+    }
+  }
+}
+
+async function _loadPerfTemplateOptions() {
+  const tmplSel = document.getElementById('pf-template');
+  if (!tmplSel) return;
+  const d = await api('/api/performance/templates');
+  if (!d.ok) return;
+  _perfTemplates = await d.json();
+  tmplSel.innerHTML = '<option value="">選擇範本</option>' +
+    _perfTemplates.filter(t=>t.active).map(t=>`<option value="${t.id}">${escHtml(t.name)}</option>`).join('');
+}
+
+function loadPerfTemplateItems() {
+  const tmplId = parseInt(document.getElementById('pf-template').value);
+  const tmpl = _perfTemplates.find(t => t.id === tmplId);
+  const section = document.getElementById('pf-items-section');
+  const list    = document.getElementById('pf-items-list');
+  if (!tmpl || !tmpl.items || !tmpl.items.length) { section.style.display='none'; return; }
+  section.style.display = '';
+  list.innerHTML = tmpl.items.map((item, i) => `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:8px 10px;background:var(--bg);border-radius:6px">
+      <div style="flex:1;font-size:13px;font-weight:500">${escHtml(item.name)}</div>
+      <div style="font-size:12px;color:var(--muted)">(滿分 ${item.max_score||10})</div>
+      <input type="number" id="pf-item-${i}" min="0" max="${item.max_score||10}" value="${item.max_score||10}"
+        style="width:70px;padding:5px 8px;border:1.5px solid var(--border);border-radius:5px;font-size:13px;text-align:center"
+        oninput="recalcPerfScore()">
+    </div>`).join('');
+  recalcPerfScore();
+}
+
+function recalcPerfScore() {
+  const tmplId = parseInt(document.getElementById('pf-template').value);
+  const tmpl = _perfTemplates.find(t => t.id === tmplId);
+  if (!tmpl || !tmpl.items) return;
+  let total = 0, maxTotal = 0;
+  tmpl.items.forEach((item, i) => {
+    const val = parseInt(document.getElementById(`pf-item-${i}`)?.value || 0);
+    total += isNaN(val) ? 0 : Math.min(val, item.max_score||10);
+    maxTotal += item.max_score || 10;
+  });
+  const pct = maxTotal > 0 ? total / maxTotal * 100 : 0;
+  const grade = pct >= 90 ? 'A' : pct >= 75 ? 'B' : pct >= 60 ? 'C' : 'D';
+  document.getElementById('pf-score-display').textContent = total;
+  document.getElementById('pf-max-display').textContent   = maxTotal;
+  document.getElementById('pf-grade-display').textContent = grade;
+  const gradeColor = {A:'var(--green)',B:'var(--accent)',C:'#e07b2a',D:'var(--red)'};
+  document.getElementById('pf-grade-display').style.color = gradeColor[grade];
+}
+
+async function submitPerfReview() {
+  const staffId   = document.getElementById('pf-staff').value;
+  const tmplId    = document.getElementById('pf-template').value;
+  const period    = document.getElementById('pf-period').value;
+  const reviewer  = document.getElementById('pf-reviewer').value.trim();
+  const comments  = document.getElementById('pf-comments').value.trim();
+  if (!staffId || !tmplId || !period) { showToast('請填寫員工、範本和考核期間', 'error'); return; }
+  const tmpl = _perfTemplates.find(t => t.id === parseInt(tmplId));
+  const scores = {};
+  if (tmpl && tmpl.items) {
+    tmpl.items.forEach((item, i) => {
+      scores[item.name] = parseInt(document.getElementById(`pf-item-${i}`)?.value || 0);
+    });
+  }
+  const res = await api('/api/performance/reviews', {
+    method: 'POST',
+    body: JSON.stringify({ staff_id: parseInt(staffId), template_id: parseInt(tmplId), period_label: period, scores, reviewer, comments })
+  });
+  if (!res.ok) { showToast('送出失敗', 'error'); return; }
+  showToast('考核已送出並通知員工', 'success');
+  document.getElementById('pf-comments').value = '';
+  switchPerfTab('reviews');
+}
+
+// ── 薪資調整 ──────────────────────────────────────────────────
+function openAdjustSalaryModal(reviewId, staffName, alreadyAdjusted) {
+  if (alreadyAdjusted) { showToast('此考核已完成薪資調整', 'error'); return; }
+  const delta = prompt(`${staffName} - 薪資調整金額（+正數 / -負數）`, '');
+  if (delta === null || delta.trim() === '') return;
+  const num = parseInt(delta);
+  if (isNaN(num)) { showToast('請輸入有效數字', 'error'); return; }
+  adjustPerfSalary(reviewId, num);
+}
+
+async function adjustPerfSalary(reviewId, delta) {
+  const res = await api(`/api/performance/reviews/${reviewId}/adjust-salary`, {
+    method: 'POST',
+    body: JSON.stringify({ salary_delta: delta })
+  });
+  if (!res.ok) { showToast('薪資調整失敗', 'error'); return; }
+  showToast('薪資調整完成並已通知員工', 'success');
+  loadPerfReviews();
+}
+
+// ── 考核範本 ──────────────────────────────────────────────────
+async function loadPerfTemplates() {
+  const tbody = document.getElementById('perf-templates-tbody');
+  const d = await api('/api/performance/templates');
+  if (!d.ok) { tbody.innerHTML = '<tr><td colspan="6" class="empty-state"><div class="empty-state-text">載入失敗</div></td></tr>'; return; }
+  const rows = await d.json();
+  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty-state"><div class="empty-state-text">暫無範本</div></td></tr>'; return; }
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td style="font-weight:600">${escHtml(r.name)}</td>
+      <td>${escHtml(r.description||'')}</td>
+      <td>${escHtml(r.period||'月度')}</td>
+      <td>${(r.items||[]).length}</td>
+      <td><span style="color:${r.active?'var(--green)':'var(--muted)'}">${r.active?'啟用':'停用'}</span></td>
+      <td>
+        <button class="btn" style="font-size:12px;padding:3px 8px" onclick="editPerfTemplate(${r.id})">編輯</button>
+        <button class="btn" style="font-size:12px;padding:3px 8px;margin-left:4px;color:var(--red)" onclick="deletePerfTemplate(${r.id})">刪除</button>
+      </td>
+    </tr>`).join('');
+}
+
+function openPerfTemplateModal(tmpl) {
+  const existing = document.getElementById('perf-tmpl-modal');
+  if (existing) existing.remove();
+  const items = tmpl ? (tmpl.items||[]) : [{ name:'工作態度', max_score:20 },{ name:'工作績效', max_score:30 },{ name:'團隊合作', max_score:20 },{ name:'溝通能力', max_score:15 },{ name:'專業能力', max_score:15 }];
+  const modal = document.createElement('div');
+  modal.id = 'perf-tmpl-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center';
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:28px;width:560px;max-height:85vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+        <h3 style="font-size:16px;font-weight:700;color:var(--navy)">${tmpl ? '編輯考核範本' : '新增考核範本'}</h3>
+        <button onclick="document.getElementById('perf-tmpl-modal').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted)">×</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;margin-bottom:4px">範本名稱</label>
+          <input type="text" id="ptm-name" value="${escHtml(tmpl?.name||'')}" placeholder="例：月度績效考核" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:7px;font-size:14px">
+        </div>
+        <div>
+          <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;margin-bottom:4px">考核週期</label>
+          <select id="ptm-period" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:7px;font-size:14px">
+            ${['月度','季度','半年','年度'].map(p=>`<option value="${p}" ${(tmpl?.period||'月度')===p?'selected':''}>${p}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div style="margin-bottom:12px">
+        <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;margin-bottom:4px">說明</label>
+        <input type="text" id="ptm-desc" value="${escHtml(tmpl?.description||'')}" placeholder="範本說明（可選）" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:7px;font-size:14px">
+      </div>
+      <div style="margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <label style="font-size:12px;font-weight:600;color:var(--text)">評分項目</label>
+          <button onclick="addPerfTemplateItem()" style="background:none;border:1px solid var(--accent);color:var(--accent);border-radius:5px;padding:3px 10px;font-size:12px;cursor:pointer">+ 新增項目</button>
+        </div>
+        <div id="ptm-items">
+          ${items.map((item,i)=>`
+            <div class="ptm-item-row" style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+              <input type="text" class="ptm-item-name" value="${escHtml(item.name||'')}" placeholder="項目名稱" style="flex:1;padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px">
+              <input type="number" class="ptm-item-max" value="${item.max_score||10}" min="1" max="100" style="width:70px;padding:7px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;text-align:center">
+              <button onclick="this.closest('.ptm-item-row').remove()" style="background:none;border:none;color:var(--red);font-size:16px;cursor:pointer;flex-shrink:0">×</button>
+            </div>`).join('')}
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+        <label style="font-size:13px">狀態：</label>
+        <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="ptm-active" ${(tmpl?.active!==false)?'checked':''}>啟用
+        </label>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn" onclick="document.getElementById('perf-tmpl-modal').remove()">取消</button>
+        <button class="btn btn-primary" onclick="savePerfTemplate(${tmpl?.id||'null'})">儲存</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+function addPerfTemplateItem() {
+  const container = document.getElementById('ptm-items');
+  const row = document.createElement('div');
+  row.className = 'ptm-item-row';
+  row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px';
+  row.innerHTML = `
+    <input type="text" class="ptm-item-name" placeholder="項目名稱" style="flex:1;padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px">
+    <input type="number" class="ptm-item-max" value="10" min="1" max="100" style="width:70px;padding:7px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;text-align:center">
+    <button onclick="this.closest('.ptm-item-row').remove()" style="background:none;border:none;color:var(--red);font-size:16px;cursor:pointer;flex-shrink:0">×</button>`;
+  container.appendChild(row);
+}
+
+async function savePerfTemplate(id) {
+  const name   = document.getElementById('ptm-name').value.trim();
+  const period = document.getElementById('ptm-period').value;
+  const desc   = document.getElementById('ptm-desc').value.trim();
+  const active = document.getElementById('ptm-active').checked;
+  if (!name) { showToast('請輸入範本名稱', 'error'); return; }
+  const items = [...document.querySelectorAll('.ptm-item-row')].map(row => ({
+    name: row.querySelector('.ptm-item-name').value.trim(),
+    max_score: parseInt(row.querySelector('.ptm-item-max').value) || 10
+  })).filter(item => item.name);
+  if (!items.length) { showToast('請至少新增一個評分項目', 'error'); return; }
+  const body = { name, period, description: desc, items, active };
+  const res = id
+    ? await api(`/api/performance/templates/${id}`, { method:'PUT', body: JSON.stringify(body) })
+    : await api('/api/performance/templates', { method:'POST', body: JSON.stringify(body) });
+  if (!res.ok) { showToast('儲存失敗', 'error'); return; }
+  showToast('範本已儲存', 'success');
+  document.getElementById('perf-tmpl-modal').remove();
+  loadPerfTemplates();
+  _perfTemplates = [];
+}
+
+async function editPerfTemplate(id) {
+  const d = await api('/api/performance/templates');
+  if (!d.ok) return;
+  const templates = await d.json();
+  const tmpl = templates.find(t => t.id === id);
+  if (!tmpl) return;
+  openPerfTemplateModal(tmpl);
+}
+
+async function deletePerfTemplate(id) {
+  if (!confirm('確定刪除此考核範本？')) return;
+  const res = await api(`/api/performance/templates/${id}`, { method:'DELETE' });
+  if (!res.ok) { showToast('刪除失敗', 'error'); return; }
+  showToast('已刪除', 'success');
+  loadPerfTemplates();
+  _perfTemplates = [];
 }
 </script>
 </html>

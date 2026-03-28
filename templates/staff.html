@@ -175,6 +175,7 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
         <button class="tab"        id="tab-attendance"    onclick="switchTab('attendance')">出勤月曆</button>
         <button class="tab"        id="tab-payslip"       onclick="switchTab('payslip')">薪資單</button>
         <button class="tab"        id="tab-expense"       onclick="switchTab('expense')" style="position:relative">費用報帳<span id="expense-badge" style="display:none;position:absolute;top:6px;right:6px;background:var(--red);color:#fff;border-radius:50%;width:16px;height:16px;font-size:10px;line-height:16px;text-align:center"></span></button>
+        <button class="tab"        id="tab-myperf"        onclick="switchTab('myperf')">我的考核</button>
       </div>
 
       <!-- 打卡 tab -->
@@ -374,6 +375,13 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
         <div id="att-calendar"></div>
       </div>
 
+      <!-- 我的考核 tab -->
+      <div id="panel-myperf" class="tab-body" style="display:none">
+        <div id="myperf-list">
+          <div style="text-align:center;color:var(--muted);font-size:13px;padding:40px">載入中...</div>
+        </div>
+      </div>
+
       <!-- 費用報帳 tab -->
       <div id="panel-expense" class="tab-body" style="display:none">
         <!-- 新增費用申請 -->
@@ -513,7 +521,7 @@ function showMain(){
   switchTab('punch');
 }
 function switchTab(tab){
-  ['ann','punch','sched','leave','schedule-view','overtime','attendance','payslip','expense'].forEach(t=>{
+  ['ann','punch','sched','leave','schedule-view','overtime','attendance','payslip','expense','myperf'].forEach(t=>{
     document.getElementById('tab-'+t).classList.toggle('active',t===tab);
     document.getElementById('panel-'+t).style.display=t===tab?'':'none';
   });
@@ -526,6 +534,7 @@ function switchTab(tab){
   if(tab==='attendance')initAttendanceTab();
   if(tab==='payslip')initPayslipTab();
   if(tab==='expense')initExpenseTab();
+  if(tab==='myperf')loadMyPerf();
 }
 
 /* GPS */
@@ -2062,6 +2071,54 @@ async function loadMyExpenses() {
   const badge = document.getElementById('expense-badge');
   if (pending > 0) { badge.textContent = pending; badge.style.display = ''; }
   else badge.style.display = 'none';
+}
+
+// ══════════════════════════════════════════════════════════════
+// 我的考核模組
+// ══════════════════════════════════════════════════════════════
+async function loadMyPerf() {
+  const el = document.getElementById('myperf-list');
+  el.innerHTML = '<div style="text-align:center;color:var(--muted);font-size:13px;padding:40px">載入中...</div>';
+  const res = await fetch('/api/performance/my-reviews');
+  if (!res.ok) {
+    el.innerHTML = '<div style="text-align:center;color:var(--muted);font-size:13px;padding:40px">載入失敗</div>';
+    return;
+  }
+  const reviews = await res.json();
+  if (!reviews.length) {
+    el.innerHTML = '<div style="text-align:center;color:var(--muted);font-size:13px;padding:40px">尚無考核記錄</div>';
+    return;
+  }
+  const gradeColor = {A:'#22c55e',B:'#3b82f6',C:'#f97316',D:'#ef4444'};
+  const gradeBg    = {A:'rgba(34,197,94,0.1)',B:'rgba(59,130,246,0.1)',C:'rgba(249,115,22,0.1)',D:'rgba(239,68,68,0.1)'};
+  el.innerHTML = reviews.map(r => {
+    const pct = r.max_score > 0 ? Math.round(r.total_score / r.max_score * 100) : 0;
+    return `
+    <div style="background:#fff;border-radius:12px;border:1.5px solid var(--border);padding:16px;margin-bottom:12px">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px">
+        <div>
+          <div style="font-size:15px;font-weight:700;color:var(--navy)">${esc(r.period_label||'')} 考核</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px">${esc(r.template_name||'')} · ${r.reviewed_at ? r.reviewed_at.slice(0,10) : ''}</div>
+        </div>
+        <div style="text-align:center;background:${gradeBg[r.grade]||'var(--bg)'};border-radius:10px;padding:10px 16px;min-width:64px">
+          <div style="font-size:26px;font-weight:800;color:${gradeColor[r.grade]||'var(--text)'};line-height:1">${r.grade||'-'}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">${pct}%</div>
+        </div>
+      </div>
+      <div style="background:var(--bg);border-radius:8px;padding:6px 12px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+          <span style="color:var(--muted)">得分</span>
+          <span style="font-weight:600">${r.total_score||0} / ${r.max_score||0} 分</span>
+        </div>
+        <div style="background:var(--border);border-radius:4px;height:6px;overflow:hidden">
+          <div style="width:${pct}%;height:100%;background:${gradeColor[r.grade]||'var(--accent)'};border-radius:4px;transition:width .4s"></div>
+        </div>
+      </div>
+      ${r.comments ? `<div style="font-size:12px;color:var(--muted);font-style:italic">"${esc(r.comments)}"</div>` : ''}
+      ${r.salary_adjusted ? `<div style="margin-top:8px;font-size:12px;color:#22c55e;font-weight:600">✓ 薪資調整：${r.salary_delta >= 0 ? '+' : ''}${fmtNum(r.salary_delta)} 元</div>` : ''}
+      ${r.reviewer ? `<div style="margin-top:6px;font-size:11px;color:var(--muted)">考核人：${esc(r.reviewer)}</div>` : ''}
+    </div>`;
+  }).join('');
 }
 </script>
 </body>

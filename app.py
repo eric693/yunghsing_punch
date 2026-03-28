@@ -1469,12 +1469,20 @@ def _handle_line_punch_event(event, cfg):
                 _pending_line_punches[user_id] = punch_type
             else:
                 _do_line_punch(staff, user_id, None, None, punch_type, PUNCH_LABEL)
+        elif text in ('查餘假', '餘假', '假期', '查假', '特休'):
+            _line_query_leave_balance(staff, user_id)
+        elif text in ('查薪資', '薪資', '薪水', '薪資單', '查薪水'):
+            _line_query_salary(staff, user_id)
+        elif text.startswith('請假'):
+            _line_submit_leave(staff, user_id, text)
+        elif text in ('績效', '考核', '我的考核', '查績效'):
+            _line_query_performance(staff, user_id)
+        elif text in ('假別', '假別清單', '假別列表'):
+            _line_show_leave_types(staff, user_id)
+        elif text in ('選單', '功能', '菜單', '?', '？', 'help', 'Help', 'HELP'):
+            _line_show_help(staff, user_id)
         else:
-            _send_line_punch(user_id,
-                f'哈囉 {staff["name"]}！\n\n'
-                '打卡指令：\n📍 傳送位置 → 自動打卡\n'
-                '💬 上班 / 下班 / 休息 / 回來\n'
-                '📋 狀態 → 查看今日記錄')
+            _line_show_help(staff, user_id)
 
 
 def _do_line_punch(staff, user_id, lat, lng, forced_type, PUNCH_LABEL):
@@ -7621,3 +7629,521 @@ def api_expense_review(cid):
         _notify_review_result(claim['staff_id'], '費用報帳', action, extra)
 
     return jsonify(_expense_row(row)) if row else ('', 404)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 績效考核模組
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _init_performance_db():
+    sqls = [
+        """CREATE TABLE IF NOT EXISTS performance_templates (
+            id          SERIAL PRIMARY KEY,
+            name        TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            period      TEXT DEFAULT 'quarterly',
+            items       JSONB DEFAULT '[]',
+            active      BOOLEAN DEFAULT TRUE,
+            created_at  TIMESTAMPTZ DEFAULT NOW()
+        )""",
+        """CREATE TABLE IF NOT EXISTS performance_reviews (
+            id              SERIAL PRIMARY KEY,
+            staff_id        INT REFERENCES punch_staff(id) ON DELETE CASCADE,
+            template_id     INT REFERENCES performance_templates(id) ON DELETE SET NULL,
+            period_label    TEXT NOT NULL,
+            scores          JSONB DEFAULT '{}',
+            total_score     NUMERIC(6,2) DEFAULT 0,
+            max_score       NUMERIC(6,2) DEFAULT 100,
+            grade           TEXT DEFAULT '',
+            comments        TEXT DEFAULT '',
+            reviewer        TEXT DEFAULT '',
+            salary_adjusted BOOLEAN DEFAULT FALSE,
+            salary_delta    NUMERIC(12,2) DEFAULT 0,
+            reviewed_at     TIMESTAMPTZ DEFAULT NOW(),
+            created_at      TIMESTAMPTZ DEFAULT NOW()
+        )""",
+    ]
+    for sql in sqls:
+        try:
+            with get_db() as conn:
+                conn.execute(sql)
+        except Exception as e:
+            print(f"[perf_init] {e}")
+
+_init_performance_db()
+
+
+def _perf_template_row(r):
+    if not r: return None
+    d = dict(r)
+    if d.get('created_at'): d['created_at'] = d['created_at'].isoformat()
+    if isinstance(d.get('items'), str):
+        try: d['items'] = _json.loads(d['items'])
+        except: d['items'] = []
+    return d
+
+def _perf_review_row(r):
+    if not r: return None
+    d = dict(r)
+    for f in ('reviewed_at', 'created_at'):
+        if d.get(f): d[f] = d[f].isoformat()
+    if isinstance(d.get('scores'), str):
+        try: d['scores'] = _json.loads(d['scores'])
+        except: d['scores'] = {}
+    if d.get('total_score') is not None: d['total_score'] = float(d['total_score'])
+    if d.get('max_score')   is not None: d['max_score']   = float(d['max_score'])
+    if d.get('salary_delta')is not None: d['salary_delta']= float(d['salary_delta'])
+    return d
+
+def _score_to_grade(pct):
+    if pct >= 90: return 'A'
+    if pct >= 75: return 'B'
+    if pct >= 60: return 'C'
+    return 'D'
+
+# ── 考核範本 CRUD ───────────────────────────────────────────────
+
+@app.route('/api/performance/templates', methods=['GET'])
+@login_required
+def api_perf_templates_list():
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM performance_templates ORDER BY created_at DESC"
+        ).fetchall()
+    return jsonify([_perf_template_row(r) for r in rows])
+
+@app.route('/api/performance/templates', methods=['POST'])
+@login_required
+def api_perf_template_create():
+    b = request.get_json(force=True)
+    name = (b.get('name') or '').strip()
+    if not name: return jsonify({'error': '請填寫範本名稱'}), 400
+    items = b.get('items', [])
+    with get_db() as conn:
+        row = conn.execute("""
+            INSERT INTO performance_templates (name, description, period, items)
+            VALUES (%s,%s,%s,%s) RETURNING *
+        """, (name, b.get('description',''), b.get('period','quarterly'),
+              _json.dumps(items))).fetchone()
+    return jsonify(_perf_template_row(row)), 201
+
+@app.route('/api/performance/templates/<int:tid>', methods=['PUT'])
+@login_required
+def api_perf_template_update(tid):
+    b = request.get_json(force=True)
+    with get_db() as conn:
+        row = conn.execute("""
+            UPDATE performance_templates
+            SET name=%s, description=%s, period=%s, items=%s, active=%s
+            WHERE id=%s RETURNING *
+        """, (b.get('name','').strip(), b.get('description',''),
+              b.get('period','quarterly'), _json.dumps(b.get('items',[])),
+              bool(b.get('active', True)), tid)).fetchone()
+    return jsonify(_perf_template_row(row)) if row else ('', 404)
+
+@app.route('/api/performance/templates/<int:tid>', methods=['DELETE'])
+@login_required
+def api_perf_template_delete(tid):
+    with get_db() as conn:
+        conn.execute("DELETE FROM performance_templates WHERE id=%s", (tid,))
+    return jsonify({'deleted': tid})
+
+# ── 考核記錄 CRUD ───────────────────────────────────────────────
+
+@app.route('/api/performance/reviews', methods=['GET'])
+@login_required
+def api_perf_reviews_list():
+    staff_id = request.args.get('staff_id')
+    period   = request.args.get('period')
+    conds, params = ['TRUE'], []
+    if staff_id: conds.append("pr.staff_id=%s"); params.append(int(staff_id))
+    if period:   conds.append("pr.period_label ILIKE %s"); params.append(f'%{period}%')
+    with get_db() as conn:
+        rows = conn.execute(f"""
+            SELECT pr.*,
+                   ps.name  AS staff_name,  ps.role   AS staff_role,
+                   pt.name  AS tpl_name
+            FROM performance_reviews pr
+            JOIN punch_staff         ps ON ps.id = pr.staff_id
+            LEFT JOIN performance_templates pt ON pt.id = pr.template_id
+            WHERE {' AND '.join(conds)}
+            ORDER BY pr.reviewed_at DESC
+        """, params).fetchall()
+    result = []
+    for r in rows:
+        d = _perf_review_row(r)
+        d['staff_name'] = r['staff_name']
+        d['staff_role'] = r['staff_role']
+        d['tpl_name']   = r['tpl_name'] or ''
+        result.append(d)
+    return jsonify(result)
+
+@app.route('/api/performance/reviews', methods=['POST'])
+@login_required
+def api_perf_review_create():
+    b           = request.get_json(force=True)
+    staff_id    = b.get('staff_id')
+    template_id = b.get('template_id')
+    period_label= (b.get('period_label') or '').strip()
+    scores      = b.get('scores', {})
+    comments    = (b.get('comments') or '').strip()
+    reviewer    = session.get('admin_display_name', '管理員')
+
+    if not staff_id or not period_label:
+        return jsonify({'error': '請選擇員工及考核期間'}), 400
+
+    # Calculate total & grade from template items
+    total = 0.0; max_s = 100.0
+    if template_id:
+        with get_db() as conn:
+            tpl = conn.execute(
+                "SELECT items FROM performance_templates WHERE id=%s", (template_id,)
+            ).fetchone()
+        if tpl:
+            items = tpl['items']
+            if isinstance(items, str):
+                try: items = _json.loads(items)
+                except: items = []
+            if items:
+                max_s = sum(float(it.get('max_score', 10)) for it in items)
+                total = sum(
+                    float(scores.get(str(it.get('id', it.get('name',''))), 0))
+                    for it in items
+                )
+    else:
+        total = float(b.get('total_score', 0))
+        max_s = float(b.get('max_score', 100))
+
+    pct   = (total / max_s * 100) if max_s > 0 else 0
+    grade = _score_to_grade(pct)
+
+    with get_db() as conn:
+        row = conn.execute("""
+            INSERT INTO performance_reviews
+              (staff_id, template_id, period_label, scores, total_score,
+               max_score, grade, comments, reviewer, reviewed_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW()) RETURNING *
+        """, (staff_id, template_id or None, period_label,
+              _json.dumps(scores), round(total, 2), round(max_s, 2),
+              grade, comments, reviewer)).fetchone()
+        staff = conn.execute(
+            "SELECT name FROM punch_staff WHERE id=%s", (staff_id,)
+        ).fetchone()
+
+    # LINE 通知
+    grade_labels = {'A': '優秀 🌟', 'B': '良好 👍', 'C': '待加強 📚', 'D': '需改善 ⚠️'}
+    msg = (f"[績效考核] {period_label} 考核結果\n"
+           f"總分：{total:.1f} / {max_s:.0f}（{pct:.0f}%）\n"
+           f"評級：{grade} {grade_labels.get(grade,'')}\n"
+           f"考核人：{reviewer}\n"
+           + (f"備注：{comments[:60]}\n" if comments else '')
+           + "請至員工系統查看詳情。")
+    _notify_staff_line(staff_id, msg)
+
+    d = _perf_review_row(row)
+    d['staff_name'] = staff['name'] if staff else ''
+    return jsonify(d), 201
+
+@app.route('/api/performance/reviews/<int:rid>', methods=['PUT'])
+@login_required
+def api_perf_review_update(rid):
+    b        = request.get_json(force=True)
+    scores   = b.get('scores', {})
+    comments = (b.get('comments') or '').strip()
+    with get_db() as conn:
+        rev = conn.execute(
+            "SELECT * FROM performance_reviews WHERE id=%s", (rid,)
+        ).fetchone()
+        if not rev: return ('', 404)
+        # Recalculate score
+        total = float(b.get('total_score', rev['total_score']))
+        max_s = float(b.get('max_score',   rev['max_score']))
+        pct   = (total / max_s * 100) if max_s > 0 else 0
+        grade = _score_to_grade(pct)
+        row = conn.execute("""
+            UPDATE performance_reviews
+            SET scores=%s, total_score=%s, max_score=%s, grade=%s,
+                comments=%s, reviewed_at=NOW()
+            WHERE id=%s RETURNING *
+        """, (_json.dumps(scores), round(total,2), round(max_s,2),
+              grade, comments, rid)).fetchone()
+    return jsonify(_perf_review_row(row)) if row else ('', 404)
+
+@app.route('/api/performance/reviews/<int:rid>/adjust-salary', methods=['POST'])
+@login_required
+def api_perf_adjust_salary(rid):
+    """依考核結果調薪 — 直接更新員工底薪並記錄"""
+    b     = request.get_json(force=True)
+    delta = float(b.get('delta', 0))
+    note  = (b.get('note') or '').strip()
+    if delta == 0: return jsonify({'error': '調薪金額不可為 0'}), 400
+    with get_db() as conn:
+        rev = conn.execute(
+            "SELECT * FROM performance_reviews WHERE id=%s", (rid,)
+        ).fetchone()
+        if not rev: return ('', 404)
+        staff = conn.execute(
+            "SELECT id, name, base_salary FROM punch_staff WHERE id=%s", (rev['staff_id'],)
+        ).fetchone()
+        if not staff: return ('', 404)
+        new_salary = float(staff['base_salary'] or 0) + delta
+        conn.execute(
+            "UPDATE punch_staff SET base_salary=%s WHERE id=%s",
+            (new_salary, staff['id'])
+        )
+        conn.execute("""
+            UPDATE performance_reviews
+            SET salary_adjusted=TRUE, salary_delta=%s
+            WHERE id=%s
+        """, (delta, rid))
+
+    direction = '調升' if delta > 0 else '調降'
+    msg = (f"[薪資調整] 績效考核連動\n"
+           f"考核期：{rev['period_label']}　評級：{rev['grade']}\n"
+           f"{direction} NT$ {abs(delta):,.0f}\n"
+           f"新底薪：NT$ {new_salary:,.0f}\n"
+           + (f"說明：{note}" if note else ''))
+    _notify_staff_line(staff['id'], msg)
+
+    return jsonify({'ok': True, 'new_salary': new_salary, 'delta': delta})
+
+# ── 員工查自己的考核 ────────────────────────────────────────────
+
+@app.route('/api/performance/my-reviews', methods=['GET'])
+def api_perf_my_reviews():
+    sid = session.get('punch_staff_id')
+    if not sid: return jsonify({'error': 'not logged in'}), 401
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT pr.*, pt.name AS tpl_name
+            FROM performance_reviews pr
+            LEFT JOIN performance_templates pt ON pt.id=pr.template_id
+            WHERE pr.staff_id=%s
+            ORDER BY pr.reviewed_at DESC LIMIT 10
+        """, (sid,)).fetchall()
+    result = []
+    for r in rows:
+        d = _perf_review_row(r)
+        d['tpl_name'] = r['tpl_name'] or ''
+        result.append(d)
+    return jsonify(result)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# LINE Bot 雙向查詢擴充
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _line_query_leave_balance(staff, user_id):
+    """查詢員工本年度假期餘額"""
+    from datetime import date as _dlb
+    year = _dlb.today().year
+    try:
+        with get_db() as conn:
+            rows = conn.execute("""
+                SELECT lb.total_days, lb.used_days, lt.name AS type_name
+                FROM leave_balances lb
+                JOIN leave_types lt ON lt.id=lb.leave_type_id
+                WHERE lb.staff_id=%s AND lb.year=%s
+                ORDER BY lt.sort_order
+            """, (staff['id'], year)).fetchall()
+    except Exception as e:
+        _send_line_punch(user_id, f'查詢失敗：{e}')
+        return
+    if not rows:
+        _send_line_punch(user_id, f'📋 {staff["name"]} {year} 年\n尚無假期餘額記錄，請聯絡管理員。')
+        return
+    lines = [f'📋 {staff["name"]} {year} 年假期餘額']
+    for r in rows:
+        total = float(r['total_days'] or 0)
+        used  = float(r['used_days']  or 0)
+        remain= total - used
+        bar   = '▓' * int(remain) + '░' * max(0, int(total - remain))
+        lines.append(f'\n【{r["type_name"]}】\n  剩餘 {remain:.1f} 天 / 共 {total:.0f} 天\n  {bar}')
+    _send_line_punch(user_id, '\n'.join(lines))
+
+
+def _line_query_salary(staff, user_id):
+    """查詢員工最近一筆薪資記錄"""
+    try:
+        with get_db() as conn:
+            row = conn.execute("""
+                SELECT month, net_pay, base_salary, allowance_total, deduction_total, status
+                FROM salary_records
+                WHERE staff_id=%s
+                ORDER BY month DESC LIMIT 1
+            """, (staff['id'],)).fetchone()
+    except Exception as e:
+        _send_line_punch(user_id, f'查詢失敗：{e}')
+        return
+    if not row:
+        _send_line_punch(user_id, f'📊 {staff["name"]}\n尚無薪資記錄。')
+        return
+    status_map = {'draft':'草稿', 'confirmed':'已確認', 'paid':'已發放'}
+    _send_line_punch(user_id,
+        f'📊 {staff["name"]} {row["month"]} 薪資\n\n'
+        f'底薪：NT$ {float(row["base_salary"] or 0):,.0f}\n'
+        f'津貼：NT$ {float(row["allowance_total"] or 0):,.0f}\n'
+        f'扣除：NT$ {float(row["deduction_total"] or 0):,.0f}\n'
+        f'━━━━━━━━━━━━\n'
+        f'實領：NT$ {float(row["net_pay"] or 0):,.0f}\n'
+        f'狀態：{status_map.get(row["status"], row["status"])}\n\n'
+        f'詳細資訊請至員工系統薪資單查看。')
+
+
+def _line_submit_leave(staff, user_id, text):
+    """
+    解析並建立請假申請。
+    格式：請假 [假別] [開始日期] [結束日期(選填)] [原因(選填)]
+    範例：請假 特休 2026-04-01
+         請假 事假 2026-04-01 2026-04-02 家庭事務
+    """
+    import re as _re_lv
+    from datetime import date as _dlv
+    parts = text.strip().split()
+    # parts[0] = '請假'
+    if len(parts) < 3:
+        _send_line_punch(user_id,
+            '請假格式：\n請假 [假別] [日期]\n\n'
+            '範例：\n請假 特休 2026-04-01\n請假 事假 2026-04-01 2026-04-02 家庭事務\n\n'
+            '輸入「假別」查看可用假別。')
+        return
+
+    leave_type_name = parts[1]
+    date_str1 = parts[2]
+    date_str2 = parts[3] if len(parts) > 3 and _re_lv.match(r'\d{4}-\d{2}-\d{2}', parts[3]) else date_str1
+    reason = ' '.join(parts[4:]) if len(parts) > 4 else '（LINE 請假）'
+    if date_str2 == date_str1 and len(parts) > 3 and not _re_lv.match(r'\d{4}-\d{2}-\d{2}', parts[3]):
+        reason = ' '.join(parts[3:])
+
+    # Validate dates
+    try:
+        _dlv.fromisoformat(date_str1)
+        _dlv.fromisoformat(date_str2)
+    except ValueError:
+        _send_line_punch(user_id, f'日期格式錯誤，請使用 YYYY-MM-DD，例：{_dlv.today().isoformat()}')
+        return
+
+    # Find leave type (fuzzy: exact or contains)
+    with get_db() as conn:
+        lt = conn.execute(
+            "SELECT * FROM leave_types WHERE active=TRUE AND name=%s", (leave_type_name,)
+        ).fetchone()
+        if not lt:
+            lt = conn.execute(
+                "SELECT * FROM leave_types WHERE active=TRUE AND name ILIKE %s LIMIT 1",
+                (f'%{leave_type_name}%',)
+            ).fetchone()
+        if not lt:
+            avail = conn.execute(
+                "SELECT name FROM leave_types WHERE active=TRUE ORDER BY sort_order"
+            ).fetchall()
+            names = '、'.join(r['name'] for r in avail)
+            _send_line_punch(user_id, f'找不到假別「{leave_type_name}」\n\n可用假別：{names}')
+            return
+
+        # Check leave balance
+        year = date_str1[:4]
+        bal = conn.execute("""
+            SELECT total_days, used_days FROM leave_balances
+            WHERE staff_id=%s AND leave_type_id=%s AND year=%s
+        """, (staff['id'], lt['id'], int(year))).fetchone()
+
+        # Calculate requested days (exclude Sunday)
+        from datetime import timedelta as _tdlv
+        s = _dlv.fromisoformat(date_str1); e = _dlv.fromisoformat(date_str2)
+        days = sum(1 for i in range((e-s).days+1)
+                   if (_dlv.fromisoformat(date_str1) + __import__('datetime').timedelta(days=i)).weekday() != 6)
+
+        if bal:
+            remain = float(bal['total_days'] or 0) - float(bal['used_days'] or 0)
+            if remain < days:
+                _send_line_punch(user_id,
+                    f'⚠️ {lt["name"]} 餘額不足\n剩餘 {remain:.1f} 天，申請 {days} 天\n\n'
+                    f'請至員工系統調整後再申請。')
+                return
+
+        # Create leave request
+        row = conn.execute("""
+            INSERT INTO leave_requests
+              (staff_id, leave_type_id, start_date, end_date, days,
+               reason, status, created_at)
+            VALUES (%s,%s,%s,%s,%s,%s,'pending',NOW()) RETURNING id
+        """, (staff['id'], lt['id'], date_str1, date_str2, days, reason or '（LINE 請假）')).fetchone()
+
+    bal_str = f'（剩餘 {remain:.1f} 天）' if bal else ''
+    _send_line_punch(user_id,
+        f'✅ 請假申請已送出\n\n'
+        f'假別：{lt["name"]} {bal_str}\n'
+        f'日期：{date_str1}' + (f' ～ {date_str2}' if date_str2 != date_str1 else '') + '\n'
+        f'天數：{days} 天\n'
+        f'原因：{reason}\n\n'
+        f'申請號：#{row["id"]}，等待管理員審核。')
+
+
+def _line_query_performance(staff, user_id):
+    """查詢員工最近一次績效考核"""
+    try:
+        with get_db() as conn:
+            row = conn.execute("""
+                SELECT pr.period_label, pr.grade, pr.total_score, pr.max_score,
+                       pr.comments, pr.salary_adjusted, pr.salary_delta,
+                       pr.reviewed_at, pt.name AS tpl_name
+                FROM performance_reviews pr
+                LEFT JOIN performance_templates pt ON pt.id=pr.template_id
+                WHERE pr.staff_id=%s
+                ORDER BY pr.reviewed_at DESC LIMIT 1
+            """, (staff['id'],)).fetchone()
+    except Exception as e:
+        _send_line_punch(user_id, f'查詢失敗：{e}')
+        return
+    if not row:
+        _send_line_punch(user_id, f'📈 {staff["name"]}\n尚無績效考核記錄。')
+        return
+    grade_label = {'A':'優秀 🌟','B':'良好 👍','C':'待加強 📚','D':'需改善 ⚠️'}
+    pct = float(row['total_score']) / float(row['max_score']) * 100 if row['max_score'] else 0
+    adj = f"\n薪資調整：NT$ {float(row['salary_delta']):+,.0f}" if row['salary_adjusted'] else ''
+    reviewed = str(row['reviewed_at'])[:10] if row['reviewed_at'] else ''
+    _send_line_punch(user_id,
+        f'📈 {staff["name"]} 最近考核\n\n'
+        f'期間：{row["period_label"]}\n'
+        f'範本：{row["tpl_name"] or "—"}\n'
+        f'得分：{float(row["total_score"]):.1f} / {float(row["max_score"]):.0f}（{pct:.0f}%）\n'
+        f'評級：{row["grade"]} {grade_label.get(row["grade"],"")}'
+        f'{adj}\n'
+        + (f'備注：{row["comments"][:60]}\n' if row['comments'] else '')
+        + f'考核日：{reviewed}')
+
+
+def _line_show_help(staff, user_id):
+    _send_line_punch(user_id,
+        f'哈囉 {staff["name"]}！以下是可用的指令：\n\n'
+        '─── 打卡 ───\n'
+        '📍 傳送位置 → 自動打卡\n'
+        '💬 上班 / 下班 / 休息 / 回來\n'
+        '📋 狀態 → 今日打卡記錄\n\n'
+        '─── 查詢 ───\n'
+        '🌿 查餘假 → 本年假期餘額\n'
+        '💰 查薪資 → 最近薪資單\n'
+        '📈 考核 → 最近績效考核\n\n'
+        '─── 申請 ───\n'
+        '📝 請假 [假別] [日期] → 送出請假\n'
+        '   範例：請假 特休 2026-04-01\n'
+        '🗂️ 假別 → 查看可用假別清單\n\n'
+        '─── 其他 ───\n'
+        '🔓 解除綁定')
+
+
+def _line_show_leave_types(staff, user_id):
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT name, max_days FROM leave_types WHERE active=TRUE ORDER BY sort_order"
+        ).fetchall()
+    if not rows:
+        _send_line_punch(user_id, '目前無可用假別。'); return
+    lines = ['🗂️ 可用假別清單\n']
+    for r in rows:
+        limit = f'（年限 {r["max_days"]} 天）' if r['max_days'] else ''
+        lines.append(f'• {r["name"]} {limit}')
+    lines.append('\n申請方式：請假 [假別] [日期]')
+    _send_line_punch(user_id, '\n'.join(lines))
+
