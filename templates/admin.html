@@ -1966,6 +1966,10 @@ async function loadAnomalies() {
   const card = document.getElementById('dash-anomaly-card');
   const list = document.getElementById('dash-anomaly-list');
   const cnt  = document.getElementById('dash-anomaly-count');
+  // Update punch tab badge regardless of where we are
+  const errCount = (data.anomalies || []).filter(a => a.severity === 'error').length;
+  const dot = document.getElementById('tabdot-anomaly');
+  if (dot) { dot.style.display = errCount ? '' : 'none'; dot.textContent = errCount || ''; }
   if (!data.anomalies || !data.anomalies.length) {
     card.style.display = 'none';
     return;
