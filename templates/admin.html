@@ -3110,6 +3110,8 @@ const FORMULA_PRESETS = [
   { label: '全勤獎金（固定）',    formula: '2000' },
   { label: '職務加給5%',         formula: 'base_salary * 0.05' },
   { label: '年資加給',           formula: 'service_years * 500' },
+  { label: '午餐費（出勤天數×70）', formula: 'actual_days * 70' },
+  { label: '全勤扣款（事假1天扣半、2天扣全）', formula: '3000 * (0.5 if personal_days == 1 else (1 if personal_days >= 2 else 0))' },
 ];
 
 function openFormulaEditor(itemId, currentFormula) {
