@@ -1343,6 +1343,25 @@ def _send_line_punch(user_id, text):
         print(f"[LINE PUNCH] push_message error: {e}")
 
 
+def _send_line_with_quick_reply(user_id, text, items):
+    """Send a message with Quick Reply buttons.
+    items: [{'label': str (≤20 chars), 'text': str (message to send on tap)}, ...]
+    """
+    from linebot.models import QuickReply, QuickReplyButton, MessageAction
+    cfg = get_line_punch_config()
+    if not cfg or not cfg.get('enabled') or not cfg.get('channel_access_token'):
+        return
+    qr_items = [
+        QuickReplyButton(action=MessageAction(label=it['label'][:20], text=it['text']))
+        for it in items[:13]
+    ]
+    msg = TextSendMessage(text=text, quick_reply=QuickReply(items=qr_items))
+    try:
+        LineBotApi(cfg['channel_access_token']).push_message(user_id, msg)
+    except Exception as e:
+        print(f"[LINE PUNCH] push_message (qr) error: {e}")
+
+
 @app.route('/line-punch/webhook', methods=['POST'])
 def line_punch_webhook():
     cfg = get_line_punch_config()
@@ -1489,6 +1508,8 @@ def _handle_line_punch_event(event, cfg):
               or text.startswith('出勤紀錄 ') or text.startswith('出勤記錄 ')
               or text.startswith('打卡紀錄 ') or text.startswith('打卡記錄 ')):
             _line_query_monthly_records(staff, user_id, text)
+        elif text == '加班':
+            _line_overtime_start(staff, user_id)
         elif text.startswith('申請加班'):
             _line_submit_overtime(staff, user_id, text)
         elif text in ('選單', '功能', '菜單', '?', '？', 'help', 'Help', 'HELP'):
@@ -9207,14 +9228,41 @@ def _line_submit_leave(staff, user_id, text):
          請假 事假 2026-04-01 2026-04-02 家庭事務
     """
     import re as _re_lv
-    from datetime import date as _dlv
+    from datetime import date as _dlv, timedelta as _tdlv
+    WDAY_LV = ['一', '二', '三', '四', '五', '六', '日']
     parts = text.strip().split()
     # parts[0] = '請假'
-    if len(parts) < 3:
-        _send_line_punch(user_id,
-            '請假格式：\n請假 [假別] [日期]\n\n'
-            '範例：\n請假 特休 2026-04-01\n請假 事假 2026-04-01 2026-04-02 家庭事務\n\n'
-            '輸入「假別」查看可用假別。')
+
+    # Step 1: only "請假" → Quick Reply with leave types
+    if len(parts) == 1:
+        with get_db() as conn:
+            types = conn.execute(
+                "SELECT name FROM leave_types WHERE active=TRUE ORDER BY sort_order"
+            ).fetchall()
+        if not types:
+            _send_line_punch(user_id, '目前無可用假別，請聯絡管理員。')
+            return
+        items = [{'label': r['name'], 'text': f'請假 {r["name"]}'} for r in types[:13]]
+        _send_line_with_quick_reply(user_id, '🌿 請假申請\n\n請選擇假別：', items)
+        return
+
+    # Step 2: "請假 假別" (no date) → Quick Reply with date options
+    if len(parts) == 2:
+        leave_type_name = parts[1]
+        today = _dlv.today()
+        date_items = []
+        for i in range(7):
+            d = today + _tdlv(days=i)
+            if d.weekday() == 6:  # skip Sunday
+                continue
+            label = ('今天 ' if i == 0 else '明天 ' if i == 1 else '') + f'{d.strftime("%m/%d")}({WDAY_LV[d.weekday()]})'
+            date_items.append({'label': label, 'text': f'請假 {leave_type_name} {d.isoformat()}'})
+            if len(date_items) == 6:
+                break
+        _send_line_with_quick_reply(user_id,
+            f'🌿 請假 · {leave_type_name}\n\n請選擇日期，或手動輸入：\n'
+            f'請假 {leave_type_name} YYYY-MM-DD',
+            date_items)
         return
 
     leave_type_name = parts[1]
@@ -9430,6 +9478,20 @@ def _line_query_monthly_records(staff, user_id, text):
             _send_line_punch(user_id, '\n'.join(chunk))
 
 
+def _line_overtime_start(staff, user_id):
+    """加班 button → Quick Reply with date options."""
+    from datetime import date as _dot_s, timedelta as _tdot_s
+    WDAY_OT = ['一', '二', '三', '四', '五', '六', '日']
+    today = _dot_s.today()
+    items = []
+    for i in range(-1, 5):
+        d = today + _tdot_s(days=i)
+        label = ('昨天 ' if i == -1 else '今天 ' if i == 0 else '明天 ' if i == 1 else '') + \
+                f'{d.strftime("%m/%d")}({WDAY_OT[d.weekday()]})'
+        items.append({'label': label, 'text': f'申請加班 {d.isoformat()}'})
+    _send_line_with_quick_reply(user_id, '⏰ 加班申請\n\n請選擇加班日期：', items)
+
+
 def _line_submit_overtime(staff, user_id, text):
     """
     LINE 加班申請。格式：申請加班 [YYYY-MM-DD] [時數] [原因]
@@ -9438,11 +9500,25 @@ def _line_submit_overtime(staff, user_id, text):
     import re as _re_ot
     from datetime import date as _dot
     parts = text.strip().split(None, 3)
+
+    # Only date provided → Quick Reply with hours options
+    if len(parts) == 2:
+        date_str = parts[1]
+        try:
+            _dot.fromisoformat(date_str)
+        except ValueError:
+            _send_line_punch(user_id, f'日期格式錯誤，請使用 YYYY-MM-DD，例：{_dot.today().isoformat()}')
+            return
+        items = [
+            {'label': f'{h} 小時', 'text': f'申請加班 {date_str} {h}'}
+            for h in ['1', '1.5', '2', '2.5', '3', '4', '5', '6']
+        ]
+        _send_line_with_quick_reply(user_id,
+            f'⏰ 加班日期：{date_str}\n\n請選擇加班時數：', items)
+        return
+
     if len(parts) < 3:
-        _send_line_punch(user_id,
-            '加班申請格式：\n申請加班 [日期] [時數] [原因]\n\n'
-            '範例：申請加班 2026-04-05 3 業績衝刺\n'
-            '（時數可用小數，如 1.5）')
+        _line_overtime_start(staff, user_id)
         return
     date_str = parts[1]
     try:
