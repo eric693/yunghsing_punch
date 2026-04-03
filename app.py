@@ -1199,6 +1199,34 @@ def api_punch_summary():
         else:
             d['duration_min'] = None
         result.append(d)
+
+    # Merge cross-midnight pairs: day N has clock_in only → day N+1 has clock_out only
+    from datetime import date as _date2, timedelta as _td2, datetime as _dt2m
+    result.sort(key=lambda x: (x.get('staff_id', 0), x.get('work_date', '')))
+    merged = []
+    skip_idx = set()
+    for i, d in enumerate(result):
+        if i in skip_idx:
+            continue
+        if d['clock_in'] and not d['clock_out'] and i + 1 < len(result):
+            nd = result[i + 1]
+            if (nd['staff_id'] == d['staff_id']
+                    and d['work_date'] and nd['work_date']
+                    and nd['work_date'] == (
+                        _date2.fromisoformat(d['work_date']) + _td2(days=1)
+                    ).isoformat()
+                    and nd['clock_out'] and not nd['clock_in']):
+                d = dict(d)
+                d['clock_out']   = nd['clock_out']
+                ci = _dt2m.fromisoformat(d['clock_in'].replace('Z', ''))
+                co = _dt2m.fromisoformat(d['clock_out'].replace('Z', ''))
+                d['duration_min'] = max(0, int((co - ci).total_seconds() / 60))
+                d['punch_count']  = d.get('punch_count', 0) + nd.get('punch_count', 0)
+                d['has_manual']   = bool(d.get('has_manual')) or bool(nd.get('has_manual'))
+                skip_idx.add(i + 1)
+        merged.append(d)
+    result = merged
+
     return jsonify(result)
 
 @app.route('/api/attendance/monthly-stats', methods=['GET'])
@@ -1235,6 +1263,28 @@ def api_attendance_monthly_stats():
             WHERE TO_CHAR(sa.date,'YYYY-MM') = %s
         """, (month,)).fetchall()
         shift_map = {(r['staff_id'], str(r['date'])): r for r in shift_rows}
+
+    # Convert to mutable dicts; merge cross-midnight pairs before stats computation
+    rows = [dict(r) for r in rows]
+    from datetime import timedelta as _td_cm
+    rows.sort(key=lambda x: (x['staff_id'], x['work_date']))
+    merged_rows = []
+    skip_cm = set()
+    for _i, _r in enumerate(rows):
+        if _i in skip_cm:
+            continue
+        if _r['has_in'] and not _r['has_out'] and _i + 1 < len(rows):
+            _nr = rows[_i + 1]
+            _nxt_date = _r['work_date'] + _td_cm(days=1) if _r['work_date'] else None
+            if (_nr['staff_id'] == _r['staff_id']
+                    and _nxt_date and _nr['work_date'] == _nxt_date
+                    and _nr['has_out'] and not _nr['has_in']):
+                _r = dict(_r)
+                _r['has_out']   = True
+                _r['clock_out'] = _nr['clock_out']
+                skip_cm.add(_i + 1)
+        merged_rows.append(_r)
+    rows = merged_rows
 
     from collections import defaultdict
     stats = defaultdict(lambda: {
@@ -1596,8 +1646,7 @@ def _do_line_punch(staff, user_id, lat, lng, forced_type, PUNCH_LABEL):
             last = conn.execute("""
                 SELECT punch_type, punched_at FROM punch_records
                 WHERE staff_id=%s
-                  AND (punched_at AT TIME ZONE 'Asia/Taipei')::date
-                    = (NOW() AT TIME ZONE 'Asia/Taipei')::date
+                  AND punched_at >= NOW() - INTERVAL '24 hours'
                 ORDER BY punched_at DESC LIMIT 1
             """, (staff['id'],)).fetchone()
         if not last:
@@ -3894,6 +3943,31 @@ def _calc_punch_hours(conn, staff_id, month):
         if ds not in day_map:
             day_map[ds] = []
         day_map[ds].append({'type': r['punch_type'], 'dt': pa_tw})
+
+    # Merge cross-midnight pairs: day N has 'in' but no 'out'; day N+1 has 'out' but no 'in'
+    from datetime import date as _dateh2
+    _sorted_ds  = sorted(day_map.keys())
+    _merged_keys = set()
+    for _i in range(len(_sorted_ds) - 1):
+        _ds_cur = _sorted_ds[_i]
+        _ds_nxt = _sorted_ds[_i + 1]
+        if _ds_cur in _merged_keys or _ds_nxt in _merged_keys:
+            continue
+        try:
+            if (_dateh2.fromisoformat(_ds_nxt) - _dateh2.fromisoformat(_ds_cur)).days != 1:
+                continue
+        except Exception:
+            continue
+        _cur = day_map[_ds_cur]
+        _nxt = day_map[_ds_nxt]
+        if (any(p['type'] == 'in'  for p in _cur)
+                and not any(p['type'] == 'out' for p in _cur)
+                and not any(p['type'] == 'in'  for p in _nxt)
+                and any(p['type'] == 'out' for p in _nxt)):
+            day_map[_ds_cur] = _cur + _nxt
+            _merged_keys.add(_ds_nxt)
+    for _k in _merged_keys:
+        del day_map[_k]
 
     total_hours = 0.0
     details     = []
