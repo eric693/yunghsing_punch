@@ -4327,6 +4327,19 @@ def api_salary_generate():
     month = b.get('month', '').strip()
     if not month: return jsonify({'error': '請指定月份'}), 400
     with get_db() as conn:
+        # Per-month advisory lock (transaction-scoped): prevents concurrent generation
+        # for the same month. Different months can run in parallel.
+        try:
+            month_int = int(month.replace('-', ''))  # e.g. 202604
+        except ValueError:
+            return jsonify({'error': '月份格式錯誤，請使用 YYYY-MM'}), 400
+        lock_key = 4_200_000_000 + month_int  # stable bigint, unique per month
+        locked = conn.execute(
+            "SELECT pg_try_advisory_xact_lock(%s)", (lock_key,)
+        ).fetchone()[0]
+        if not locked:
+            return jsonify({'error': f'{month} 薪資正在產生中，請稍後再試'}), 409
+
         staff_list = conn.execute(
             "SELECT * FROM punch_staff WHERE active=TRUE"
         ).fetchall()
