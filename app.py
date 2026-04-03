@@ -1149,6 +1149,8 @@ def api_punch_record_manual():
 @login_required
 def api_punch_record_update(rid):
     b = request.get_json(force=True)
+    if b.get('punch_type') not in ('in', 'out', 'break_out', 'break_in'):
+        return jsonify({'error': '無效的打卡類型'}), 400
     punched_at_parsed = _parse_tw_datetime(b.get('punched_at'))
     with get_db() as conn:
         row = conn.execute("""
@@ -1592,16 +1594,33 @@ def _do_line_punch(staff, user_id, lat, lng, forced_type, PUNCH_LABEL):
     else:
         with get_db() as conn:
             last = conn.execute("""
-                SELECT punch_type FROM punch_records
+                SELECT punch_type, punched_at FROM punch_records
                 WHERE staff_id=%s
                   AND (punched_at AT TIME ZONE 'Asia/Taipei')::date
                     = (NOW() AT TIME ZONE 'Asia/Taipei')::date
                 ORDER BY punched_at DESC LIMIT 1
             """, (staff['id'],)).fetchone()
-        if not last:                               punch_type = 'in'
-        elif last['punch_type'] == 'in':           punch_type = 'out'
-        elif last['punch_type'] == 'break_out':    punch_type = 'break_in'
-        else:                                      punch_type = 'in'
+        if not last:
+            punch_type = 'in'
+        elif last['punch_type'] == 'in':
+            punch_type = 'out'
+        elif last['punch_type'] == 'break_out':
+            punch_type = 'break_in'
+        else:
+            # last was 'out' or 'break_in' → next would be 'in',
+            # but reject if punched within 5 minutes to prevent accidental double-punch
+            now_utc = _dt3.now(_tz3.utc)
+            last_at = last['punched_at']
+            if last_at.tzinfo is None:
+                last_at = last_at.replace(tzinfo=_tz3.utc)
+            elapsed = int((now_utc - last_at).total_seconds())
+            if elapsed < 300:
+                _send_line_punch(user_id,
+                    f'⚠️ 您剛於 {elapsed} 秒前完成打卡\n'
+                    '若確認要重新上班，請等候 5 分鐘後再打卡，\n'
+                    '或使用「上班」指令強制打卡。')
+                return
+            punch_type = 'in'
 
     label = PUNCH_LABEL.get(punch_type, punch_type)
 
@@ -2302,7 +2321,7 @@ def api_shift_assignment_create():
                 for month in months:
                     row = conn.execute("""
                         SELECT dates FROM schedule_requests
-                        WHERE staff_id=%s AND month=%s AND status='approved'
+                        WHERE staff_id=%s AND month=%s AND status IN ('approved', 'pending')
                     """, (sid, month)).fetchone()
                     if row:
                         approved_dates = row['dates'] or []
@@ -3288,9 +3307,14 @@ def _calc_leave_days(start_date_str, end_date_str, start_half=False, end_half=Fa
     cur  = s
     while cur <= e:
         if cur.weekday() != 6:  # exclude Sunday (勞基法最低標準)
-            if cur == s and start_half: days += 0.5
-            elif cur == e and end_half: days += 0.5
-            else: days += 1.0
+            if cur == s and start_half and cur == e and end_half:
+                days += 1.0  # same day: AM half + PM half = full day
+            elif cur == s and start_half:
+                days += 0.5
+            elif cur == e and end_half:
+                days += 0.5
+            else:
+                days += 1.0
         cur += _tdd(days=1)
     return days
 
@@ -3827,7 +3851,8 @@ def _eval_formula(formula, base_salary, insured_salary, service_years, extra=Non
         }
         if extra:
             ctx.update({k: float(v or 0) for k, v in extra.items()})
-        result = eval(formula, {"__builtins__": {}}, ctx)
+        from simpleeval import simple_eval
+        result = simple_eval(formula, names=ctx)
         return round(float(result), 2)
     except Exception:
         return 0.0
