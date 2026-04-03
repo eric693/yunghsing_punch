@@ -267,6 +267,8 @@ def init_db():
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS ot_rate2 NUMERIC(4,2) DEFAULT 1.66",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS ot_rate3 NUMERIC(4,2) DEFAULT 2.0",
         "ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS document_id INT REFERENCES finance_documents(id) ON DELETE SET NULL",
+        "ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS leave_start_time TEXT DEFAULT NULL",
+        "ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS leave_end_time TEXT DEFAULT NULL",
         "ALTER TABLE finance_documents ADD COLUMN IF NOT EXISTS image_data TEXT",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS salary_type TEXT DEFAULT 'monthly'",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS hourly_rate NUMERIC(12,2) DEFAULT 0",
@@ -9420,7 +9422,7 @@ def _line_submit_leave(staff, user_id, text):
             date_items)
         return
 
-    # Step 2.5: "請假 假別 DATE" (one date, no period) → Quick Reply: 全天/上午半天/下午半天
+    # Step 2.5: "請假 假別 DATE" (one date, no period) → Quick Reply: 全天/上午/下午/自訂時段
     if len(parts) == 3 and _re_lv.match(r'^\d{4}-\d{2}-\d{2}$', parts[2]):
         leave_type_name = parts[1]
         date_str = parts[2]
@@ -9428,29 +9430,55 @@ def _line_submit_leave(staff, user_id, text):
             {'label': '全天',     'text': f'請假 {leave_type_name} {date_str} 全天'},
             {'label': '上午半天', 'text': f'請假 {leave_type_name} {date_str} 上午'},
             {'label': '下午半天', 'text': f'請假 {leave_type_name} {date_str} 下午'},
+            {'label': '⏰ 自訂時段', 'text': f'請假 {leave_type_name} {date_str} 09:00'},
         ]
         _send_line_with_quick_reply(user_id,
             f'🌿 請假 · {leave_type_name}\n日期：{date_str}\n\n請選擇時段：',
             items_period)
         return
 
+    # Step 2.6: "請假 假別 DATE HH:MM" → Quick Reply 選結束時間
+    if (len(parts) == 4
+            and _re_lv.match(r'^\d{4}-\d{2}-\d{2}$', parts[2])
+            and _re_lv.match(r'^\d{2}:\d{2}$', parts[3])):
+        leave_type_name = parts[1]
+        date_str = parts[2]
+        start_str = parts[3]
+        sh, sm = map(int, start_str.split(':'))
+        end_options = []
+        for delta_h in [1, 1.5, 2, 2.5, 3, 4, 6, 8]:
+            total_m = sh * 60 + sm + int(delta_h * 60)
+            eh, em = (total_m // 60) % 24, total_m % 60
+            end_options.append((f'{eh:02d}:{em:02d}', delta_h))
+        items_end = [
+            {'label': f'至 {t}（{d}h）', 'text': f'請假 {leave_type_name} {date_str} {start_str} {t}'}
+            for t, d in end_options
+        ]
+        _send_line_with_quick_reply(user_id,
+            f'🌿 請假 · {leave_type_name}\n日期：{date_str}　開始：{start_str}\n\n請選擇結束時間：',
+            items_end)
+        return
+
     leave_type_name = parts[1]
     date_str1 = parts[2]
 
-    # Detect period token (全天/上午/下午) or second date
+    # 判斷是否為「幾點到幾點」的自訂時段格式：請假 假別 DATE HH:MM HH:MM
+    leave_start_time = None
+    leave_end_time   = None
     start_half = False; end_half = False
     period_token = None
-    if len(parts) > 3:
+    date_str2 = date_str1
+
+    if len(parts) >= 5 and _re_lv.match(r'^\d{2}:\d{2}$', parts[3]) and _re_lv.match(r'^\d{2}:\d{2}$', parts[4]):
+        # 自訂時段：DATE START_TIME END_TIME
+        leave_start_time = parts[3]
+        leave_end_time   = parts[4]
+    elif len(parts) > 3:
         tok = parts[3].strip()
         if tok in ('全天', '上午', '下午'):
             period_token = tok
-            date_str2 = date_str1
         elif _re_lv.match(r'^\d{4}-\d{2}-\d{2}$', tok):
             date_str2 = tok
-        else:
-            date_str2 = date_str1
-    else:
-        date_str2 = date_str1
 
     if period_token == '上午':
         start_half = True; end_half = True
@@ -9492,12 +9520,22 @@ def _line_submit_leave(staff, user_id, text):
             WHERE staff_id=%s AND leave_type_id=%s AND year=%s
         """, (staff['id'], lt['id'], int(year))).fetchone()
 
-        # Calculate requested days (exclude Sunday); half day = 0.5
-        s = _dlv.fromisoformat(date_str1); e = _dlv.fromisoformat(date_str2)
-        days = sum(1 for i in range((e - s).days + 1)
-                   if (s + _tdlv(days=i)).weekday() != 6)
-        if start_half or end_half:
-            days = max(0.5, days - 0.5)
+        # Calculate requested days
+        if leave_start_time and leave_end_time:
+            # 自訂時段：依小時換算天數（員工每日工時）
+            daily_hours = float(staff.get('daily_hours') or 8)
+            sh, sm = map(int, leave_start_time.split(':'))
+            eh, em = map(int, leave_end_time.split(':'))
+            leave_minutes = (eh * 60 + em) - (sh * 60 + sm)
+            if leave_minutes <= 0:
+                leave_minutes += 24 * 60
+            days = round(leave_minutes / 60 / daily_hours, 2)
+        else:
+            s = _dlv.fromisoformat(date_str1); e = _dlv.fromisoformat(date_str2)
+            days = sum(1 for i in range((e - s).days + 1)
+                       if (s + _tdlv(days=i)).weekday() != 6)
+            if start_half or end_half:
+                days = max(0.5, days - 0.5)
 
         remain = None
         if bal:
@@ -9512,13 +9550,20 @@ def _line_submit_leave(staff, user_id, text):
         row = conn.execute("""
             INSERT INTO leave_requests
               (staff_id, leave_type_id, start_date, end_date, total_days,
-               start_half, end_half, reason, status, created_at)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending',NOW()) RETURNING id
+               start_half, end_half, reason, status, leave_start_time, leave_end_time, created_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s,NOW()) RETURNING id
         """, (staff['id'], lt['id'], date_str1, date_str2, days,
-              start_half, end_half, reason)).fetchone()
+              start_half, end_half, reason, leave_start_time, leave_end_time)).fetchone()
 
-    period_label = '（上午半天）' if (start_half and end_half and date_str1 == date_str2) else \
-                   '（下午半天）' if (end_half and not start_half and date_str1 == date_str2) else ''
+    if leave_start_time and leave_end_time:
+        period_label = f'（{leave_start_time} ～ {leave_end_time}）'
+    elif start_half and end_half and date_str1 == date_str2:
+        period_label = '（上午半天）'
+    elif end_half and not start_half and date_str1 == date_str2:
+        period_label = '（下午半天）'
+    else:
+        period_label = ''
+
     bal_str = f'（剩餘 {remain:.1f} 天）' if remain is not None else ''
     _send_line_punch(user_id,
         f'✅ 請假申請已送出\n\n'
