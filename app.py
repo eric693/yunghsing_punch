@@ -10507,14 +10507,22 @@ def webauthn_register_begin():
     else:
         return jsonify({'error': '請先登入'}), 401
 
+    # 動態偵測實際 origin/rp_id，優先使用環境變數，否則從請求推導
+    from urllib.parse import urlparse as _urlparse
+    _req_origin = request.headers.get('Origin') or request.url_root.rstrip('/')
+    rp_id  = os.environ.get('WEBAUTHN_RP_ID')  or (_urlparse(_req_origin).hostname or _WEBAUTHN_RP_ID)
+    origin = os.environ.get('WEBAUTHN_ORIGIN') or _req_origin
+
     challenge = secrets.token_bytes(32)
     session['webauthn_reg_challenge'] = _b64url_encode(challenge)
     session['webauthn_reg_user_key']  = user_key
+    session['webauthn_reg_rp_id']     = rp_id
+    session['webauthn_reg_origin']    = origin
 
     user_id_bytes = user_key.encode('utf-8')
 
     options = {
-        'rp': {'id': _WEBAUTHN_RP_ID, 'name': _WEBAUTHN_RP_NAME},
+        'rp': {'id': rp_id, 'name': _WEBAUTHN_RP_NAME},
         'user': {
             'id': _b64url_encode(user_id_bytes),
             'name': user_name,
@@ -10545,6 +10553,10 @@ def webauthn_register_complete():
     if not challenge_b64 or not user_key:
         return jsonify({'error': '找不到挑戰，請重新開始'}), 400
 
+    # 使用 begin 時儲存的 rp_id / origin
+    webauthn_rp_id = session.get('webauthn_reg_rp_id', _WEBAUTHN_RP_ID)
+    webauthn_origin = session.get('webauthn_reg_origin', _WEBAUTHN_ORIGIN)
+
     b = request.get_json(force=True) or {}
     try:
         credential_id = b['id']
@@ -10558,7 +10570,7 @@ def webauthn_register_complete():
         recv_challenge = client_json['challenge']
         # normalize both sides
         assert recv_challenge.rstrip('=') == challenge_b64.rstrip('='), 'challenge mismatch'
-        assert client_json['origin'] == _WEBAUTHN_ORIGIN, f"origin mismatch: {client_json['origin']}"
+        assert client_json['origin'] == webauthn_origin, f"origin mismatch: {client_json['origin']}"
 
         # Parse CBOR attestation object to get public key
         try:
@@ -10572,7 +10584,7 @@ def webauthn_register_complete():
 
         # authData layout: rpIdHash(32) + flags(1) + signCount(4) + [AAGUID(16) + credLen(2) + credId + coseKey]
         rp_id_hash = auth_data[:32]
-        expected_hash = _hs2.sha256(_WEBAUTHN_RP_ID.encode()).digest()
+        expected_hash = _hs2.sha256(webauthn_rp_id.encode()).digest()
         assert rp_id_hash == expected_hash, 'rpIdHash mismatch'
 
         flags = auth_data[32]
@@ -10601,6 +10613,8 @@ def webauthn_register_complete():
 
         session.pop('webauthn_reg_challenge', None)
         session.pop('webauthn_reg_user_key', None)
+        session.pop('webauthn_reg_rp_id', None)
+        session.pop('webauthn_reg_origin', None)
         return jsonify({'ok': True})
 
     except Exception as ex:
@@ -10640,13 +10654,21 @@ def webauthn_auth_begin():
         # Discoverable credential (resident key) — no allowCredentials needed
         pass
 
+    # 動態偵測實際 origin/rp_id
+    from urllib.parse import urlparse as _urlparse2
+    _req_origin2 = request.headers.get('Origin') or request.url_root.rstrip('/')
+    rp_id  = os.environ.get('WEBAUTHN_RP_ID')  or (_urlparse2(_req_origin2).hostname or _WEBAUTHN_RP_ID)
+    origin = os.environ.get('WEBAUTHN_ORIGIN') or _req_origin2
+
     challenge = secrets.token_bytes(32)
     session['webauthn_auth_challenge'] = _b64url_encode(challenge)
+    session['webauthn_auth_rp_id']     = rp_id
+    session['webauthn_auth_origin']    = origin
 
     options = {
         'challenge': _b64url_encode(challenge),
         'timeout': 60000,
-        'rpId': _WEBAUTHN_RP_ID,
+        'rpId': rp_id,
         'allowCredentials': allow_credentials,
         'userVerification': 'required',
     }
@@ -10661,6 +10683,10 @@ def webauthn_auth_complete():
     if not challenge_b64:
         return jsonify({'error': '找不到挑戰，請重新開始'}), 400
 
+    # 使用 begin 時儲存的 rp_id / origin
+    webauthn_rp_id  = session.get('webauthn_auth_rp_id', _WEBAUTHN_RP_ID)
+    webauthn_origin = session.get('webauthn_auth_origin', _WEBAUTHN_ORIGIN)
+
     b = request.get_json(force=True) or {}
     try:
         credential_id = b['id']
@@ -10673,11 +10699,11 @@ def webauthn_auth_complete():
         assert client_json['type'] == 'webauthn.get', 'wrong type'
         recv_challenge = client_json['challenge']
         assert recv_challenge.rstrip('=') == challenge_b64.rstrip('='), 'challenge mismatch'
-        assert client_json['origin'] == _WEBAUTHN_ORIGIN, f"origin mismatch: {client_json['origin']}"
+        assert client_json['origin'] == webauthn_origin, f"origin mismatch: {client_json['origin']}"
 
         # Verify rpIdHash
         rp_id_hash = auth_data[:32]
-        assert rp_id_hash == _hs3.sha256(_WEBAUTHN_RP_ID.encode()).digest(), 'rpIdHash mismatch'
+        assert rp_id_hash == _hs3.sha256(webauthn_rp_id.encode()).digest(), 'rpIdHash mismatch'
         flags = auth_data[32]
         assert flags & 0x01, 'User Presence not set'
         assert flags & 0x04, 'User Verification not set'
@@ -10704,6 +10730,8 @@ def webauthn_auth_complete():
             )
 
         session.pop('webauthn_auth_challenge', None)
+        session.pop('webauthn_auth_rp_id', None)
+        session.pop('webauthn_auth_origin', None)
 
         # Create session based on user_key
         user_key = cred['user_key']
