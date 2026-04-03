@@ -1723,7 +1723,7 @@ def api_richmenu_create():
     b = request.get_json(force=True) or {}
     gdrive_url = b.get('gdrive_url', '').strip()
     btn_texts  = b.get('button_texts') or []
-    defaults   = ['上班', '下班', '休息', '回來']
+    defaults   = ['上班', '下班', '請假', '加班']
     btn_texts  = [(btn_texts[i].strip() if i < len(btn_texts) and btn_texts[i].strip() else defaults[i]) for i in range(4)]
 
     body = {
