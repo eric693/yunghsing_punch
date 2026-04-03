@@ -501,8 +501,8 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
       <div class="card">
         <div class="table-wrap">
           <table>
-            <thead><tr><th>姓名</th><th>員工代碼</th><th>職稱</th><th>帳號</th><th>狀態</th><th>操作</th></tr></thead>
-            <tbody id="punch-staff-tbody"><tr><td colspan="6" class="empty-state"><div class="empty-state-text">載入中...</div></td></tr></tbody>
+            <thead><tr><th>姓名</th><th>員工代碼</th><th>部門/職稱</th><th>帳號</th><th>匯款帳號</th><th>狀態</th><th>操作</th></tr></thead>
+            <tbody id="punch-staff-tbody"><tr><td colspan="7" class="empty-state"><div class="empty-state-text">載入中...</div></td></tr></tbody>
           </table>
         </div>
       </div>
@@ -3982,19 +3982,26 @@ async function loadPunchStaff() {
   punchStaffList = ok ? data : [];
   const tb = document.getElementById('punch-staff-tbody');
   document.getElementById('punch-staff-count').textContent = `共 ${punchStaffList.length} 位員工`;
-  if (!punchStaffList.length) { tb.innerHTML = '<tr><td colspan="5" class="empty-state"><div class="empty-state-text">尚無員工</div></td></tr>'; return; }
-  tb.innerHTML = punchStaffList.map(s => `<tr>
+  if (!punchStaffList.length) { tb.innerHTML = '<tr><td colspan="7" class="empty-state"><div class="empty-state-text">尚無員工</div></td></tr>'; return; }
+  tb.innerHTML = punchStaffList.map(s => {
+    const dept = [s.department, s.role].filter(Boolean).join(' / ') || '—';
+    const bankInfo = s.bank_account
+      ? `<span style="font-family:'DM Mono',monospace;font-size:11px">${escHtml(s.bank_name||'')} ${escHtml(s.bank_account)}</span>`
+      : '<span style="color:var(--muted);font-size:12px">未設定</span>';
+    return `<tr>
     <td style="font-weight:600">${escHtml(s.name)}</td>
     <td style="font-family:'DM Mono',monospace;font-size:12px;color:var(--muted)">${escHtml(s.employee_code||'—')}</td>
-    <td style="color:var(--muted)">${escHtml(s.role||'')}</td>
+    <td style="color:var(--muted);font-size:13px">${escHtml(dept)}</td>
     <td style="font-family:'DM Mono',monospace;font-size:12px">${escHtml(s.username||'—')}</td>
+    <td>${bankInfo}</td>
     <td>${s.active ? '<span class="badge badge-ok">在職</span>' : '<span class="badge badge-warn">停用</span>'}</td>
     <td style="white-space:nowrap">
       <button class="btn btn-outline btn-sm" onclick="openPunchStaffModal(${s.id})">編輯</button>
       <button class="btn btn-ghost btn-sm" style="margin-left:4px" onclick="openTerminateModal(${s.id},'${escHtml(s.name)}')" title="辦理離職">離職</button>
       <button class="btn btn-danger btn-sm" onclick="deletePunchStaff(${s.id})" style="margin-left:4px">刪除</button>
     </td>
-  </tr>`).join('');
+  </tr>`;
+  }).join('');
 }
 function openPunchStaffModal(id=null) {
   punchEditStaffId = id;

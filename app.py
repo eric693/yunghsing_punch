@@ -637,13 +637,28 @@ def punch_staff_row(row):
     if d.get('birth_date'): d['birth_date'] = d['birth_date'].isoformat()
     return d
 
+def _parse_tw_datetime(s):
+    """Parse a datetime string (with or without tz) treating naive strings as Taiwan time (UTC+8)."""
+    if not s:
+        return None
+    dt = _dt.fromisoformat(str(s).replace('Z', '+00:00'))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=TW_TZ)
+    return dt
+
+
 def punch_record_row(row):
     if not row: return None
     d = dict(row)
     for f in ['latitude', 'longitude']:
         if d.get(f) is not None: d[f] = float(d[f])
-    if d.get('punched_at'): d['punched_at'] = d['punched_at'].isoformat()
-    if d.get('created_at'): d['created_at'] = d['created_at'].isoformat()
+    for f in ['punched_at', 'created_at']:
+        if d.get(f):
+            dt = d[f]
+            if dt.tzinfo is None:
+                from datetime import timezone as _utz
+                dt = dt.replace(tzinfo=_utz.utc)
+            d[f] = dt.astimezone(TW_TZ).isoformat()
     return d
 
 def loc_row(row):
@@ -1113,12 +1128,13 @@ def api_punch_record_manual():
         return jsonify({'error': '缺少必要欄位'}), 400
     if punch_type not in ('in', 'out', 'break_out', 'break_in'):
         return jsonify({'error': '無效的打卡類型'}), 400
+    punched_at_parsed = _parse_tw_datetime(punched_at)
     with get_db() as conn:
         row = conn.execute("""
             INSERT INTO punch_records
               (staff_id, punch_type, punched_at, note, is_manual, manual_by)
             VALUES (%s,%s,%s,%s,TRUE,%s) RETURNING *
-        """, (staff_id, punch_type, punched_at, note, manual_by)).fetchone()
+        """, (staff_id, punch_type, punched_at_parsed, note, manual_by)).fetchone()
         staff = conn.execute("SELECT name FROM punch_staff WHERE id=%s", (staff_id,)).fetchone()
     d = punch_record_row(row)
     if staff: d['staff_name'] = staff['name']
@@ -1128,12 +1144,13 @@ def api_punch_record_manual():
 @login_required
 def api_punch_record_update(rid):
     b = request.get_json(force=True)
+    punched_at_parsed = _parse_tw_datetime(b.get('punched_at'))
     with get_db() as conn:
         row = conn.execute("""
             UPDATE punch_records
             SET punch_type=%s, punched_at=%s, note=%s, is_manual=TRUE, manual_by=%s
             WHERE id=%s RETURNING *
-        """, (b.get('punch_type'), b.get('punched_at'),
+        """, (b.get('punch_type'), punched_at_parsed,
               b.get('note', ''), b.get('manual_by', ''), rid)).fetchone()
     return jsonify(punch_record_row(row)) if row else ('', 404)
 
