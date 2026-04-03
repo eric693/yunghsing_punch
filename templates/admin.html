@@ -4006,7 +4006,6 @@ async function loadPunchStaff() {
 function openPunchStaffModal(id=null) {
   punchEditStaffId = id;
   document.getElementById('psm-title').textContent = id ? '編輯員工' : '新增員工';
-  document.getElementById('psm-password').value = ''; document.getElementById('psm-password2').value = '';
   const allFields = ['psm-bank-code','psm-bank-name','psm-bank-branch','psm-bank-account','psm-account-holder','psm-department','psm-hire-date','psm-birth-date'];
   if (id) {
     const s = punchStaffList.find(x => x.id === id); if (!s) return;
@@ -4019,6 +4018,8 @@ function openPunchStaffModal(id=null) {
     document.getElementById('psm-birth-date').value     = s.birth_date || '';
     document.getElementById('psm-username').value       = s.username || '';
     document.getElementById('psm-active').value         = s.active ? '1' : '0';
+    document.getElementById('psm-password').value       = s.password_plain || '';
+    document.getElementById('psm-password2').value      = s.password_plain || '';
     document.getElementById('psm-pw-hint').textContent  = '留空表示不修改密碼';
     document.getElementById('psm-bank-code').value      = s.bank_code     || '';
     document.getElementById('psm-bank-name').value      = s.bank_name     || '';
@@ -4026,7 +4027,7 @@ function openPunchStaffModal(id=null) {
     document.getElementById('psm-bank-account').value   = s.bank_account  || '';
     document.getElementById('psm-account-holder').value = s.account_holder|| '';
   } else {
-    ['psm-id','psm-name','psm-code','psm-role','psm-username',...allFields].forEach(i => document.getElementById(i).value = '');
+    ['psm-id','psm-name','psm-code','psm-role','psm-username','psm-password','psm-password2',...allFields].forEach(i => document.getElementById(i).value = '');
     document.getElementById('psm-active').value = '1';
     document.getElementById('psm-pw-hint').textContent = '新增員工請輸入密碼';
   }

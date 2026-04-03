@@ -276,6 +276,7 @@ def init_db():
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS bank_branch TEXT DEFAULT ''",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS bank_account TEXT DEFAULT ''",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS account_holder TEXT DEFAULT ''",
+        "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS password_plain TEXT DEFAULT ''",
         "ALTER TABLE overtime_requests ADD COLUMN IF NOT EXISTS day_type TEXT DEFAULT 'weekday'",
         "ALTER TABLE overtime_requests ALTER COLUMN start_time DROP NOT NULL",
         "ALTER TABLE overtime_requests ALTER COLUMN end_time DROP NOT NULL",
@@ -632,6 +633,8 @@ def punch_staff_row(row):
     if not row: return None
     d = dict(row)
     d.pop('password_hash', None)
+    # password_plain is kept so admin can view it; keep as empty string if null
+    if d.get('password_plain') is None: d['password_plain'] = ''
     if d.get('created_at'): d['created_at'] = d['created_at'].isoformat()
     if d.get('hire_date'):  d['hire_date']  = d['hire_date'].isoformat()
     if d.get('birth_date'): d['birth_date'] = d['birth_date'].isoformat()
@@ -1017,11 +1020,11 @@ def api_punch_staff_create():
         with get_db() as conn:
             row = conn.execute("""
                 INSERT INTO punch_staff
-                  (name, username, password_hash, role, employee_code,
+                  (name, username, password_hash, password_plain, role, employee_code,
                    department, hire_date, birth_date,
                    bank_code, bank_name, bank_branch, bank_account, account_holder)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
-            """, (name, username, _hash_pw(password), b.get('role', '').strip(), employee_code,
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
+            """, (name, username, _hash_pw(password), password, b.get('role', '').strip(), employee_code,
                   department, hire_date, birth_date,
                   bank_code, bank_name, bank_branch, bank_account, account_holder)).fetchone()
         return jsonify(punch_staff_row(row)), 201
@@ -1061,11 +1064,11 @@ def api_punch_staff_update(sid):
                 return jsonify({'error': '密碼至少 4 個字元'}), 400
             row = conn.execute("""
                 UPDATE punch_staff
-                SET name=%s,username=%s,password_hash=%s,role=%s,active=%s,employee_code=%s,
+                SET name=%s,username=%s,password_hash=%s,password_plain=%s,role=%s,active=%s,employee_code=%s,
                     department=%s,hire_date=%s,birth_date=%s,
                     bank_code=%s,bank_name=%s,bank_branch=%s,bank_account=%s,account_holder=%s
                 WHERE id=%s RETURNING *
-            """, (name, username, _hash_pw(password), role, active, employee_code,
+            """, (name, username, _hash_pw(password), password, role, active, employee_code,
                   department, hire_date, birth_date,
                   bank_code, bank_name, bank_branch, bank_account, account_holder, sid)).fetchone()
         else:
