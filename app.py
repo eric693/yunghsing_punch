@@ -3156,7 +3156,6 @@ def init_leave_db():
         )""",
         "ALTER TABLE leave_types ADD COLUMN IF NOT EXISTS allow_hourly BOOLEAN DEFAULT FALSE",
         "ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS total_hours NUMERIC(5,1)",
-        "UPDATE leave_types SET allow_hourly=TRUE WHERE code IN ('sick','personal')",
     ]
     for sql in migrations:
         try:
@@ -3166,27 +3165,28 @@ def init_leave_db():
             print(f"[leave_init] {str(e)[:80]}")
 
     # Seed default leave types
+    # (name, code, pay_rate, max_days, color, sort_order, allow_hourly)
     defaults = [
-        ('特休假',   'annual',      1.0,  30,  '#2e9e6b', 1),
-        ('病假',     'sick',        0.5,  30,  '#e07b2a', 2),
-        ('住院病假', 'hospitalize', 1.0,  30,  '#d64242', 3),
-        ('事假',     'personal',    0.0,  14,  '#8892a4', 4),
-        ('生理假',   'menstrual',   0.5,  12,  '#c45cb8', 5),
-        ('婚假',     'marriage',    1.0,   8,  '#c8a96e', 6),
-        ('喪假',     'funeral',     1.0,   8,  '#4a7bda', 7),
-        ('產假',     'maternity',   1.0,  56,  '#e05c8a', 8),
-        ('陪產假',   'paternity',   1.0,   7,  '#5cb8c4', 9),
-        ('公假',     'official',    1.0, None, '#243d6e', 10),
-        ('補休',     'compensatory',1.0, None, '#8b5cf6', 11),
+        ('特休假',   'annual',       1.0,  30,  '#2e9e6b', 1,  False),
+        ('病假',     'sick',         0.5,  30,  '#e07b2a', 2,  True),
+        ('住院病假', 'hospitalize',  1.0,  30,  '#d64242', 3,  False),
+        ('事假',     'personal',     0.0,  14,  '#8892a4', 4,  True),
+        ('生理假',   'menstrual',    0.5,  12,  '#c45cb8', 5,  False),
+        ('婚假',     'marriage',     1.0,   8,  '#c8a96e', 6,  False),
+        ('喪假',     'funeral',      1.0,   8,  '#4a7bda', 7,  False),
+        ('產假',     'maternity',    1.0,  56,  '#e05c8a', 8,  False),
+        ('陪產假',   'paternity',    1.0,   7,  '#5cb8c4', 9,  False),
+        ('公假',     'official',     1.0, None, '#243d6e', 10, False),
+        ('補休',     'compensatory', 1.0, None, '#8b5cf6', 11, False),
     ]
     try:
         with get_db() as conn:
             cnt = conn.execute("SELECT COUNT(*) as c FROM leave_types").fetchone()['c']
             if cnt == 0:
-                for name, code, pay, maxd, color, sort in defaults:
+                for name, code, pay, maxd, color, sort, allow_hourly in defaults:
                     conn.execute(
-                        "INSERT INTO leave_types (name,code,pay_rate,max_days,color,sort_order) VALUES (%s,%s,%s,%s,%s,%s)",
-                        (name, code, pay, maxd, color, sort)
+                        "INSERT INTO leave_types (name,code,pay_rate,max_days,color,sort_order,allow_hourly) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                        (name, code, pay, maxd, color, sort, allow_hourly)
                     )
     except Exception as e:
         print(f"[leave_seed] {e}")
