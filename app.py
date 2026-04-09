@@ -320,6 +320,12 @@ def init_db():
             created_at      TIMESTAMPTZ DEFAULT NOW(),
             last_login_at   TIMESTAMPTZ
         )""",
+        # 效能索引
+        "CREATE INDEX IF NOT EXISTS idx_punch_records_staff_time   ON punch_records(staff_id, punched_at)",
+        "CREATE INDEX IF NOT EXISTS idx_shift_assignments_staff_date ON shift_assignments(staff_id, shift_date)",
+        "CREATE INDEX IF NOT EXISTS idx_leave_requests_staff_status ON leave_requests(staff_id, status)",
+        "CREATE INDEX IF NOT EXISTS idx_leave_requests_staff_date   ON leave_requests(staff_id, start_date)",
+        "CREATE INDEX IF NOT EXISTS idx_overtime_requests_staff     ON overtime_requests(staff_id, status)",
     ]
     for sql in migrations:
         try:
@@ -3984,7 +3990,8 @@ def _eval_formula(formula, base_salary, insured_salary, service_years, extra=Non
         from simpleeval import simple_eval
         result = simple_eval(formula, names=ctx)
         return round(float(result), 2)
-    except Exception:
+    except Exception as e:
+        print(f"[FORMULA ERROR] formula={formula!r} error={e}")
         return 0.0
 
 def _calc_service_years(hire_date_str):

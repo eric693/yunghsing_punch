@@ -698,7 +698,10 @@ async function submitPunchReq(){
     const d=await res.json();
     if(!res.ok){showToast(d.error||'送出失敗','err');return;}
     showToast('補打卡申請已送出，等待主管審核','ok');
-    document.getElementById('req-reason').value='';await loadMyReqs();
+    document.getElementById('req-reason').value='';
+    document.getElementById('req-time').value='';
+    document.getElementById('req-type').selectedIndex=0;
+    await loadMyReqs();
   }catch(e){showToast('網路錯誤','err');}
   finally{_submitting.delete('punch');}
 }
@@ -1880,6 +1883,7 @@ async function submitLeaveRequest() {
     const start_half = document.getElementById('leave-start-half').checked;
     const end_half   = document.getElementById('leave-end-half').checked;
     if (!start_date || !end_date) { showToast('請選擇請假日期', 'err'); return; }
+    if (end_date < start_date) { showToast('結束日不能早於開始日', 'err'); return; }
     payload = { leave_type_id: parseInt(leave_type_id), start_date, end_date, start_half, end_half, reason, substitute_name: substitute, document_id: _leaveCertDocId };
   }
 
