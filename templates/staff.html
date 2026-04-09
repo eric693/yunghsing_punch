@@ -686,11 +686,13 @@ function showReqPanel(){
 }
 function hideReqPanel(){document.getElementById('req-panel').style.display='none';}
 async function submitPunchReq(){
+  if(_submitting.has('punch'))return;
   const punch_type=document.getElementById('req-type').value;
   const requested_at=document.getElementById('req-time').value;
   const reason=document.getElementById('req-reason').value.trim();
   if(!reason){showToast('請填寫補打原因','err');return;}
   if(!requested_at){showToast('請選擇補打時間','err');return;}
+  _submitting.add('punch');
   try{
     const res=await fetch('/api/punch/request',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({punch_type,requested_at,reason})});
     const d=await res.json();
@@ -698,6 +700,7 @@ async function submitPunchReq(){
     showToast('補打卡申請已送出，等待主管審核','ok');
     document.getElementById('req-reason').value='';await loadMyReqs();
   }catch(e){showToast('網路錯誤','err');}
+  finally{_submitting.delete('punch');}
 }
 async function loadMyReqs(){
   const res=await fetch('/api/punch/request/my');const list=await res.json();
@@ -804,14 +807,17 @@ function showSchedConfirm(){
 }
 function closeConfirm(){document.getElementById('confirm-overlay').style.display='none';}
 async function submitSchedRequest(){
+  if(_submitting.has('sched'))return;
   const dates=[...schedSelectedDates].sort();const note=document.getElementById('submit-note').value.trim();
   closeConfirm();
+  _submitting.add('sched');
   try{
     const res=await fetch('/api/schedule/my-request',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({month:curSchedMonth,dates,submit_note:note})});
     let d;try{d=await res.json();}catch(e){d={error:'伺服器回應格式錯誤'};}
     if(!res.ok){showToast(d.error||`送出失敗（${res.status}）`,'err');return;}
     showToast('申請送出成功','ok');schedExistingReq=d;renderStatusArea();renderCalendar();
   }catch(e){showToast('連線失敗，請檢查網路後重試','err');}
+  finally{_submitting.delete('sched');}
 }
 
 /* 我的排班 */
@@ -1091,24 +1097,24 @@ function updateOTHoursPreview(){
   el.innerHTML=`<strong>加班時數：${hrs} 小時</strong>　<span style="color:var(--muted)">${detail}</span>`;
 }
 async function submitOTRequest(){
+  if(_submitting.has('ot'))return;
   const request_date = document.getElementById('ot-date').value;
   const start_time   = document.getElementById('ot-start').value;
   const end_time     = document.getElementById('ot-end').value;
   const reason       = document.getElementById('ot-reason').value.trim();
   const day_type     = document.getElementById('ot-day-type')?.value || 'weekday';
 
-  // 逐一檢查，給明確提示
   if(!request_date){ showToast('請填寫加班日期','err'); return; }
   if(!start_time)  { showToast('請填寫開始時間','err'); return; }
   if(!end_time)    { showToast('請填寫結束時間','err'); return; }
   if(!reason)      { showToast('請填寫加班原因','err'); return; }
 
-  // 確認時間格式 HH:MM
   const timeRe = /^\d{2}:\d{2}$/;
   if(!timeRe.test(start_time)||!timeRe.test(end_time)){
     showToast('時間格式錯誤，請重新選擇','err'); return;
   }
 
+  _submitting.add('ot');
   try{
     const res = await fetch('/api/overtime/my-requests', {
       method:'POST',
@@ -1122,6 +1128,8 @@ async function submitOTRequest(){
     await loadMyOTRequests();
   }catch(e){
     showToast('網路錯誤，請重試','err');
+  }finally{
+    _submitting.delete('ot');
   }
 }
 async function loadMyOTRequests(){
@@ -1472,6 +1480,8 @@ function toggleAnnStaff(id, headerEl) {
 // 請假申請模組
 // ══════════════════════════════════════════════════════════════
 let leaveTypeList = [], myLeaveList = [], leaveBalanceMap = {};
+// 防止表單重複送出
+const _submitting = new Set();
 
 async function initLeaveTab() {
   const now = new Date();
@@ -1847,6 +1857,7 @@ function _onLeaveUnitChange() {
 }
 
 async function submitLeaveRequest() {
+  if(_submitting.has('leave'))return;
   const leave_type_id = document.getElementById('leave-type-sel').value;
   const reason        = document.getElementById('leave-reason').value.trim();
   const substitute    = document.getElementById('leave-sub').value.trim();
@@ -1872,6 +1883,7 @@ async function submitLeaveRequest() {
     payload = { leave_type_id: parseInt(leave_type_id), start_date, end_date, start_half, end_half, reason, substitute_name: substitute, document_id: _leaveCertDocId };
   }
 
+  _submitting.add('leave');
   try {
     const res  = await fetch('/api/leave/my-requests', {
       method: 'POST', headers: {'Content-Type':'application/json'},
@@ -1890,6 +1902,7 @@ async function submitLeaveRequest() {
     await loadMyLeaveBalance();
     await loadMyLeaveHistory();
   } catch(e) { showToast('網路錯誤', 'err'); }
+  finally { _submitting.delete('leave'); }
 }
 
 async function loadMyLeaveHistory() {
@@ -2166,6 +2179,7 @@ async function expPhotoSelected(event) {
 }
 
 async function submitExpense() {
+  if(_submitting.has('expense'))return;
   const date     = document.getElementById('exp-date').value;
   const category = document.getElementById('exp-category').value;
   const amount   = parseFloat(document.getElementById('exp-amount').value);
@@ -2175,24 +2189,27 @@ async function submitExpense() {
   }
   const body = { title: category, expense_date: date, category, amount, note,
                  document_id: _expDocumentId };
-  const res = await fetch('/api/expense/my-claims', {
-    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
-  });
-  const data = await res.json();
-  if (!data.error) {
-    showToast('申請已送出', 'ok');
-    // Reset form
-    document.getElementById('exp-amount').value = '';
-    document.getElementById('exp-note').value   = '';
-    document.getElementById('exp-photo-input').value = '';
-    document.getElementById('exp-photo-hint').style.display = '';
-    document.getElementById('exp-photo-preview').style.display = 'none';
-    _expPhotoBase64 = null;
-    _expDocumentId  = null;
-    loadMyExpenses();
-  } else {
-    showToast(data.error || '送出失敗', 'err');
-  }
+  _submitting.add('expense');
+  try {
+    const res = await fetch('/api/expense/my-claims', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (!data.error) {
+      showToast('申請已送出', 'ok');
+      document.getElementById('exp-amount').value = '';
+      document.getElementById('exp-note').value   = '';
+      document.getElementById('exp-photo-input').value = '';
+      document.getElementById('exp-photo-hint').style.display = '';
+      document.getElementById('exp-photo-preview').style.display = 'none';
+      _expPhotoBase64 = null;
+      _expDocumentId  = null;
+      loadMyExpenses();
+    } else {
+      showToast(data.error || '送出失敗', 'err');
+    }
+  } catch(e) { showToast('網路錯誤', 'err'); }
+  finally { _submitting.delete('expense'); }
 }
 
 async function loadMyExpenses() {

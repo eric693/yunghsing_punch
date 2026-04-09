@@ -3529,8 +3529,26 @@ def api_leave_request_review(rid):
             WHERE id=%s RETURNING *
         """, (new_status, reviewed_by, review_note, rid)).fetchone()
         delta = float(old['total_days'])
+        lt = conn.execute("SELECT * FROM leave_types WHERE id=%s", (old['leave_type_id'],)).fetchone()
         if action == 'approve' and old_status != 'approved':
-            # 核准：扣除餘額
+            if lt and lt['max_days'] is not None:
+                year = str(old['start_date'])[:4]
+                # 確保餘額列存在，再鎖定防止並行核准超額
+                conn.execute("""
+                    INSERT INTO leave_balances (staff_id, leave_type_id, year, total_days, used_days)
+                    VALUES (%s, %s, %s, 0, 0)
+                    ON CONFLICT (staff_id, leave_type_id, year) DO NOTHING
+                """, (old['staff_id'], old['leave_type_id'], int(year)))
+                bal = conn.execute("""
+                    SELECT COALESCE(used_days, 0) as used
+                    FROM leave_balances
+                    WHERE staff_id=%s AND leave_type_id=%s AND year=%s
+                    FOR UPDATE
+                """, (old['staff_id'], old['leave_type_id'], int(year))).fetchone()
+                used = float(bal['used']) if bal else 0.0
+                if used + delta > float(lt['max_days']):
+                    remaining = float(lt['max_days']) - used
+                    return jsonify({'error': f'{lt["name"]}餘額不足（剩 {remaining} 天），無法核准'}), 422
             _update_leave_balance(conn, old['staff_id'], old['leave_type_id'],
                                   str(old['start_date'])[:4], delta)
         elif action == 'reject' and old_status == 'approved':
@@ -3632,15 +3650,22 @@ def api_leave_submit():
             return jsonify({'error': '請假天數不合理，請檢查日期'}), 400
 
     with get_db() as conn:
-        # Check balance for types with limits
         lt = conn.execute("SELECT * FROM leave_types WHERE id=%s", (leave_type_id,)).fetchone()
         if lt and lt['max_days'] is not None:
             year = start_date[:4]
-            bal  = conn.execute("""
-                SELECT COALESCE(used_days,0) as used
+            # 確保餘額列存在，避免 FOR UPDATE 鎖不到列
+            conn.execute("""
+                INSERT INTO leave_balances (staff_id, leave_type_id, year, total_days, used_days)
+                VALUES (%s, %s, %s, 0, 0)
+                ON CONFLICT (staff_id, leave_type_id, year) DO NOTHING
+            """, (sid, leave_type_id, int(year)))
+            # 鎖定餘額列，防止並行請假超額
+            bal = conn.execute("""
+                SELECT COALESCE(used_days, 0) as used
                 FROM leave_balances
                 WHERE staff_id=%s AND leave_type_id=%s AND year=%s
-            """, (sid, leave_type_id, year)).fetchone()
+                FOR UPDATE
+            """, (sid, leave_type_id, int(year))).fetchone()
             used = float(bal['used']) if bal else 0.0
             if used + total_days > float(lt['max_days']):
                 remaining = float(lt['max_days']) - used
