@@ -3154,6 +3154,9 @@ def init_leave_db():
             updated_at  TIMESTAMPTZ DEFAULT NOW(),
             UNIQUE(staff_id, leave_type_id, year)
         )""",
+        "ALTER TABLE leave_types ADD COLUMN IF NOT EXISTS allow_hourly BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS total_hours NUMERIC(5,1)",
+        "UPDATE leave_types SET allow_hourly=TRUE WHERE code IN ('sick','personal')",
     ]
     for sql in migrations:
         try:
@@ -3204,6 +3207,7 @@ def leave_req_row(row):
     if d.get('start_date'): d['start_date'] = d['start_date'].isoformat()
     if d.get('end_date'):   d['end_date']   = d['end_date'].isoformat()
     if d.get('total_days'): d['total_days'] = float(d['total_days'])
+    if d.get('total_hours') is not None: d['total_hours'] = float(d['total_hours'])
     if d.get('reviewed_at'): d['reviewed_at'] = d['reviewed_at'].isoformat()
     if d.get('created_at'):  d['created_at']  = d['created_at'].isoformat()
     if d.get('updated_at'):  d['updated_at']  = d['updated_at'].isoformat()
@@ -3574,9 +3578,25 @@ def api_leave_submit():
     if not all([leave_type_id, start_date, end_date]):
         return jsonify({'error': '缺少必要欄位'}), 400
 
-    total_days = _calc_leave_days(start_date, end_date, start_half, end_half)
-    if total_days <= 0:
-        return jsonify({'error': '請假天數不合理，請檢查日期'}), 400
+    total_hours_req = b.get('total_hours')
+    if total_hours_req is not None:
+        try:
+            total_hours_req = float(total_hours_req)
+        except (ValueError, TypeError):
+            total_hours_req = None
+
+    if total_hours_req:
+        if total_hours_req <= 0 or total_hours_req > 24:
+            return jsonify({'error': '請假時數不合理（需介於 0～24 小時）'}), 400
+        total_days = round(total_hours_req / 8, 4)
+        end_date   = start_date
+        start_half = False
+        end_half   = False
+    else:
+        total_hours_req = None
+        total_days = _calc_leave_days(start_date, end_date, start_half, end_half)
+        if total_days <= 0:
+            return jsonify({'error': '請假天數不合理，請檢查日期'}), 400
 
     with get_db() as conn:
         # Check balance for types with limits
@@ -3591,15 +3611,18 @@ def api_leave_submit():
             used = float(bal['used']) if bal else 0.0
             if used + total_days > float(lt['max_days']):
                 remaining = float(lt['max_days']) - used
+                if total_hours_req:
+                    rem_hours = round(remaining * 8, 1)
+                    return jsonify({'error': f'{lt["name"]}剩餘 {rem_hours} 小時，無法申請 {total_hours_req} 小時'}), 422
                 return jsonify({'error': f'{lt["name"]}剩餘 {remaining} 天，無法申請 {total_days} 天'}), 422
 
         row = conn.execute("""
             INSERT INTO leave_requests
               (staff_id, leave_type_id, start_date, end_date, start_half, end_half,
-               total_days, reason, substitute_name, document_id)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
+               total_days, total_hours, reason, substitute_name, document_id)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
         """, (sid, leave_type_id, start_date, end_date, start_half, end_half,
-              total_days, reason, substitute, document_id)).fetchone()
+              total_days, total_hours_req, reason, substitute, document_id)).fetchone()
     return jsonify(leave_req_row(row)), 201
 
 # ── Leave Balance ─────────────────────────────────────────────────

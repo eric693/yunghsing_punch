@@ -346,15 +346,44 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
             <select class="fi" id="leave-type-sel" style="width:100%;margin-bottom:0" onchange="_onLeaveTypeChange()"></select>
           </div>
           <div id="leave-type-info" style="font-size:12px;color:var(--muted);margin-bottom:10px;min-height:16px"></div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
-            <div><div class="fl">開始日期 *</div><input class="fi" type="date" id="leave-start" style="margin-bottom:0" onchange="previewLeaveStaff()"></div>
-            <div><div class="fl">結束日期 *</div><input class="fi" type="date" id="leave-end"   style="margin-bottom:0" onchange="previewLeaveStaff()"></div>
+          <!-- 請假方式切換（僅支援小時的假別顯示） -->
+          <div id="leave-unit-toggle" style="display:none;margin-bottom:10px">
+            <div class="fl">請假方式</div>
+            <div style="display:flex;gap:10px">
+              <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+                <input type="radio" name="leave-unit" id="leave-unit-day" value="day" checked onchange="_onLeaveUnitChange()"> 以天數請假
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+                <input type="radio" name="leave-unit" id="leave-unit-hour" value="hour" onchange="_onLeaveUnitChange()"> 以小時請假
+              </label>
+            </div>
           </div>
-          <div style="display:flex;gap:16px;margin-bottom:10px">
-            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="leave-start-half" onchange="previewLeaveStaff()"> 開始日下午請假</label>
-            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="leave-end-half"   onchange="previewLeaveStaff()"> 結束日上午請假</label>
+          <!-- 天數請假區 -->
+          <div id="leave-dates-section">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+              <div><div class="fl">開始日期 *</div><input class="fi" type="date" id="leave-start" style="margin-bottom:0" onchange="previewLeaveStaff()"></div>
+              <div><div class="fl">結束日期 *</div><input class="fi" type="date" id="leave-end"   style="margin-bottom:0" onchange="previewLeaveStaff()"></div>
+            </div>
+            <div style="display:flex;gap:16px;margin-bottom:10px">
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="leave-start-half" onchange="previewLeaveStaff()"> 開始日下午請假</label>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="leave-end-half"   onchange="previewLeaveStaff()"> 結束日上午請假</label>
+            </div>
+            <div id="leave-days-preview" style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:10px;min-height:18px"></div>
           </div>
-          <div id="leave-days-preview" style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:10px;min-height:18px"></div>
+          <!-- 小時請假區 -->
+          <div id="leave-hours-section" style="display:none">
+            <div style="margin-bottom:10px">
+              <div class="fl">請假日期 *</div>
+              <input class="fi" type="date" id="leave-hour-date" style="margin-bottom:0">
+            </div>
+            <div style="margin-bottom:10px">
+              <div class="fl">請假時數 *</div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <input class="fi" type="number" id="leave-hour-count" min="0.5" max="8" step="0.5" placeholder="例：2" style="margin-bottom:0;width:100px">
+                <span style="font-size:13px;color:var(--muted)">小時（0.5～8）</span>
+              </div>
+            </div>
+          </div>
           <div id="leave-balance-info" style="font-size:12px;color:var(--muted);padding:8px 10px;background:var(--bg);border-radius:6px;margin-bottom:6px;min-height:32px"></div>
           <button class="btn btn-outline" style="width:100%;font-size:12px;margin-bottom:10px" onclick="showMyAnnualSchedule()">查看我的特休排程</button>
           <div style="margin-bottom:10px"><div class="fl">請假原因 *</div><input class="fi" id="leave-reason" placeholder="例：身體不適、家庭事務" style="margin-bottom:0"></div>
@@ -1459,7 +1488,7 @@ async function initLeaveTab() {
   // 填入假別選單
   const sel = document.getElementById('leave-type-sel');
   sel.innerHTML = leaveTypeList.map(t =>
-    `<option value="${t.id}" data-pay="${t.pay_rate}" data-max="${t.max_days||''}" data-color="${t.color}">${esc(t.name)}</option>`
+    `<option value="${t.id}" data-pay="${t.pay_rate}" data-max="${t.max_days||''}" data-color="${t.color}" data-hourly="${t.allow_hourly?'1':''}">${esc(t.name)}</option>`
   ).join('');
   sel.addEventListener('change', updateLeaveTypeInfo);
   updateLeaveTypeInfo();
@@ -1789,36 +1818,71 @@ async function leaveCertSelected(event) {
 
 function _onLeaveTypeChange() {
   const sel  = document.getElementById('leave-type-sel');
-  const name = sel.options[sel.selectedIndex]?.text || '';
-  const isSick = name.includes('病假');
+  const opt  = sel.options[sel.selectedIndex];
+  const name = opt?.text || '';
+  const isSick    = name.includes('病假');
+  const isHourly  = opt?.getAttribute('data-hourly') === '1';
   document.getElementById('leave-cert-section').style.display = isSick ? '' : 'none';
   if (!isSick) { _leaveCertDocId = null; document.getElementById('leave-cert-status').textContent = ''; document.getElementById('leave-cert-preview').style.display = 'none'; }
+  // 顯示/隱藏小時請假切換
+  document.getElementById('leave-unit-toggle').style.display = isHourly ? '' : 'none';
+  if (!isHourly) {
+    // 非小時假別 → 強制切回天數模式
+    document.getElementById('leave-unit-day').checked = true;
+    document.getElementById('leave-dates-section').style.display = '';
+    document.getElementById('leave-hours-section').style.display = 'none';
+  }
+}
+
+function _onLeaveUnitChange() {
+  const isHour = document.getElementById('leave-unit-hour').checked;
+  document.getElementById('leave-dates-section').style.display = isHour ? 'none' : '';
+  document.getElementById('leave-hours-section').style.display = isHour ? '' : 'none';
+  if (isHour) {
+    // 預設日期為今天
+    const today = new Date().toISOString().slice(0, 10);
+    if (!document.getElementById('leave-hour-date').value)
+      document.getElementById('leave-hour-date').value = today;
+  }
 }
 
 async function submitLeaveRequest() {
   const leave_type_id = document.getElementById('leave-type-sel').value;
-  const start_date    = document.getElementById('leave-start').value;
-  const end_date      = document.getElementById('leave-end').value;
-  const start_half    = document.getElementById('leave-start-half').checked;
-  const end_half      = document.getElementById('leave-end-half').checked;
   const reason        = document.getElementById('leave-reason').value.trim();
   const substitute    = document.getElementById('leave-sub').value.trim();
   if (!leave_type_id) { showToast('請選擇假別', 'err'); return; }
-  if (!start_date || !end_date) { showToast('請選擇請假日期', 'err'); return; }
   if (!reason) { showToast('請填寫請假原因', 'err'); return; }
-  // Require cert for sick leave
   const typeName = document.getElementById('leave-type-sel').options[document.getElementById('leave-type-sel').selectedIndex]?.text || '';
   if (typeName.includes('病假') && !_leaveCertDocId) { showToast('病假需上傳病單', 'err'); return; }
+
+  const isHourMode = document.getElementById('leave-unit-hour')?.checked;
+  let payload;
+  if (isHourMode) {
+    const hour_date  = document.getElementById('leave-hour-date').value;
+    const hour_count = parseFloat(document.getElementById('leave-hour-count').value);
+    if (!hour_date) { showToast('請選擇請假日期', 'err'); return; }
+    if (!hour_count || hour_count <= 0 || hour_count > 8) { showToast('請填寫正確時數（0.5～8 小時）', 'err'); return; }
+    payload = { leave_type_id: parseInt(leave_type_id), start_date: hour_date, end_date: hour_date, total_hours: hour_count, reason, substitute_name: substitute, document_id: _leaveCertDocId };
+  } else {
+    const start_date = document.getElementById('leave-start').value;
+    const end_date   = document.getElementById('leave-end').value;
+    const start_half = document.getElementById('leave-start-half').checked;
+    const end_half   = document.getElementById('leave-end-half').checked;
+    if (!start_date || !end_date) { showToast('請選擇請假日期', 'err'); return; }
+    payload = { leave_type_id: parseInt(leave_type_id), start_date, end_date, start_half, end_half, reason, substitute_name: substitute, document_id: _leaveCertDocId };
+  }
+
   try {
     const res  = await fetch('/api/leave/my-requests', {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ leave_type_id: parseInt(leave_type_id), start_date, end_date, start_half, end_half, reason, substitute_name: substitute, document_id: _leaveCertDocId })
+      body: JSON.stringify(payload)
     });
     const data = await res.json();
     if (!res.ok) { showToast(data.error || '送出失敗', 'err'); return; }
     showToast('請假申請已送出，等待主管審核', 'ok');
     document.getElementById('leave-reason').value = '';
     document.getElementById('leave-sub').value    = '';
+    document.getElementById('leave-hour-count').value = '';
     _leaveCertDocId = null;
     document.getElementById('leave-cert-status').textContent = '';
     document.getElementById('leave-cert-preview').style.display = 'none';
@@ -1857,8 +1921,8 @@ function renderMyLeaveList() {
           <span style="padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;background:${r.leave_color||'#4a7bda'}22;color:${r.leave_color||'#4a7bda'}">${esc(r.leave_type_name)}</span>
           <span style="font-size:11px;color:var(--muted);margin-left:8px">${payLabel}</span>
           <div style="font-size:12px;margin-top:4px;font-weight:600">
-            ${r.start_date}${sh} ～ ${r.end_date}${eh}
-            <span style="font-weight:400;color:var(--muted);margin-left:6px">${r.total_days} 天</span>
+            ${r.start_date}${sh}${r.total_hours ? '' : ` ～ ${r.end_date}${eh}`}
+            <span style="font-weight:400;color:var(--muted);margin-left:6px">${r.total_hours ? `${r.total_hours} 小時` : `${r.total_days} 天`}</span>
           </div>
         </div>
         <span style="font-size:12px;font-weight:700;color:${sc};white-space:nowrap">${sl}</span>
