@@ -2311,6 +2311,13 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <div><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="lam-start-half"> <span class="form-label" style="margin:0">開始日半天</span></label></div>
         <div><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="lam-end-half"> <span class="form-label" style="margin:0">結束日半天</span></label></div>
       </div>
+      <div style="margin-bottom:12px">
+        <label class="form-label">請假時數（選填，填寫後以小時計算，忽略結束日）</label>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input class="form-input" type="number" id="lam-hours" min="0.5" max="8" step="0.5" placeholder="例：2（留空則依天數）" style="width:180px">
+          <span style="font-size:12px;color:var(--muted)">小時（0.5～8）</span>
+        </div>
+      </div>
       <div id="lam-days-preview" style="font-size:13px;color:var(--accent);margin-bottom:12px;min-height:18px"></div>
       <div style="margin-bottom:12px"><label class="form-label">狀態</label><select class="form-input" id="lam-status" style="width:auto"><option value="approved">直接核准</option><option value="pending">待審核</option></select></div>
       <div><label class="form-label">原因/備註</label><input class="form-input" id="lam-reason" placeholder="選填" style="width:100%"></div>
@@ -5136,8 +5143,8 @@ function renderLeaveRequests() {
             return `<span style="margin-left:6px;padding:1px 7px;border-radius:10px;font-size:11px;background:#f0f2f8;color:var(--muted)">餘額 ${bal.remain.toFixed(1)} 天</span>`;
           })()}
           <div style="font-size:12px;color:var(--muted);margin-top:3px">
-            ${r.start_date}${sHalf} ~ ${r.end_date}${eHalf}
-            &nbsp;|&nbsp; <strong>${r.total_days} 天</strong>
+            ${r.start_date}${sHalf}${r.total_hours ? '' : ` ~ ${r.end_date}${eHalf}`}
+            &nbsp;|&nbsp; <strong>${r.total_hours ? r.total_hours + ' 小時' : r.total_days + ' 天'}</strong>
             &nbsp;|&nbsp; 薪資倍率：${r.pay_rate===1?'全薪':r.pay_rate===0?'無薪':r.pay_rate+'倍'}
           </div>
         </div>
@@ -5167,6 +5174,7 @@ async function openLeaveAdminModal(id=null) {
   document.getElementById('lam-type').innerHTML  = leaveTypesList.filter(t=>t.active).map(t=>`<option value="${t.id}">${escHtml(t.name)}</option>`).join('');
   document.getElementById('lam-start-half').checked = false;
   document.getElementById('lam-end-half').checked   = false;
+  document.getElementById('lam-hours').value = '';
   document.getElementById('lam-reason').value = '';
   document.getElementById('lam-status').value = 'approved';
   document.getElementById('lam-days-preview').textContent = '';
@@ -5180,6 +5188,7 @@ async function openLeaveAdminModal(id=null) {
     document.getElementById('lam-end').value   = r.end_date;
     document.getElementById('lam-start-half').checked = r.start_half||false;
     document.getElementById('lam-end-half').checked   = r.end_half||false;
+    document.getElementById('lam-hours').value = r.total_hours || '';
     document.getElementById('lam-reason').value = r.reason||'';
     document.getElementById('lam-status').value = r.status;
   } else {
@@ -5249,7 +5258,10 @@ async function saveLeaveAdmin() {
     // Delete and recreate (simplest approach)
     await api(`/api/leave/requests/${id}`,{method:'DELETE'});
   }
-  const {ok} = await api('/api/leave/requests', apiJSON({staff_id:parseInt(staff_id),leave_type_id:parseInt(leave_type_id),start_date,end_date,start_half,end_half,reason,status,reviewed_by:'管理員'}));
+  const hoursVal = parseFloat(document.getElementById('lam-hours').value);
+  const total_hours = !isNaN(hoursVal) && hoursVal > 0 ? hoursVal : undefined;
+  if (total_hours !== undefined && (total_hours < 0.5 || total_hours > 8)) { showToast('時數需介於 0.5～8 小時','error'); return; }
+  const {ok} = await api('/api/leave/requests', apiJSON({staff_id:parseInt(staff_id),leave_type_id:parseInt(leave_type_id),start_date,end_date,start_half,end_half,total_hours,reason,status,reviewed_by:'管理員'}));
   if (!ok) return;
   closeLeaveAdminModal(); showToast(id?'已更新':'請假記錄已建立','success'); await loadLeaveRequests();
 }
@@ -5276,7 +5288,7 @@ function openLeaveReview(id) {
   document.getElementById('lrm-info').innerHTML = `
     <strong>${escHtml(r.staff_name)}</strong>
     <span style="margin-left:8px;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:${r.leave_color||'#4a7bda'}22;color:${r.leave_color||'#4a7bda'}">${escHtml(r.leave_type_name)}</span><br>
-    ${r.start_date}${sh} ~ ${r.end_date}${eh}　<strong>${r.total_days} 天</strong><br>
+    ${r.start_date}${sh}${r.total_hours ? '' : ` ~ ${r.end_date}${eh}`}　<strong>${r.total_hours ? r.total_hours + ' 小時' : r.total_days + ' 天'}</strong><br>
     <span style="color:var(--muted)">${escHtml(r.reason||'（無說明）')}</span>${balHtml}`;
   const certSec  = document.getElementById('lrm-cert-section');
   const certLink = document.getElementById('lrm-cert-link');

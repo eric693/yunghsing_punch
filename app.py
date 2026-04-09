@@ -3473,20 +3473,37 @@ def api_leave_request_admin_create():
     if not all([sid, leave_type_id, start_date, end_date]):
         return jsonify({'error': '缺少必要欄位'}), 400
 
-    total_days = _calc_leave_days(start_date, end_date, start_half, end_half)
-    if total_days <= 0:
-        return jsonify({'error': '請假天數不合理，請檢查日期'}), 400
+    total_hours_req = b.get('total_hours')
+    if total_hours_req is not None:
+        try:
+            total_hours_req = float(total_hours_req)
+        except (ValueError, TypeError):
+            total_hours_req = None
+
+    if total_hours_req:
+        if total_hours_req < 0.5 or total_hours_req > 8:
+            return jsonify({'error': '時數需介於 0.5～8 小時'}), 400
+        total_days = round(total_hours_req / 8, 4)
+        end_date   = start_date
+        start_half = False
+        end_half   = False
+    else:
+        total_hours_req = None
+        total_days = _calc_leave_days(start_date, end_date, start_half, end_half)
+        if total_days <= 0:
+            return jsonify({'error': '請假天數不合理，請檢查日期'}), 400
 
     with get_db() as conn:
         row = conn.execute("""
             INSERT INTO leave_requests
               (staff_id, leave_type_id, start_date, end_date, start_half, end_half,
-               total_days, reason, status, reviewed_by, reviewed_at)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+               total_days, total_hours, reason, status, reviewed_by, reviewed_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
               CASE WHEN %s='approved' THEN NOW() ELSE NULL END)
             RETURNING *
         """, (sid, leave_type_id, start_date, end_date, start_half, end_half,
-              total_days, reason, status, b.get('reviewed_by','管理員'), status)).fetchone()
+              total_days, total_hours_req, reason, status,
+              b.get('reviewed_by','管理員'), status)).fetchone()
         if status == 'approved':
             _update_leave_balance(conn, sid, leave_type_id, start_date[:4], total_days)
     return jsonify(leave_req_row(row)), 201
@@ -3504,17 +3521,26 @@ def api_leave_request_review(rid):
     with get_db() as conn:
         old = conn.execute("SELECT * FROM leave_requests WHERE id=%s", (rid,)).fetchone()
         if not old: return ('', 404)
+        old_status = old['status']
         row = conn.execute("""
             UPDATE leave_requests
             SET status=%s, reviewed_by=%s, review_note=%s,
                 reviewed_at=NOW(), updated_at=NOW()
             WHERE id=%s RETURNING *
         """, (new_status, reviewed_by, review_note, rid)).fetchone()
-        if action == 'approve':
+        delta = float(old['total_days'])
+        if action == 'approve' and old_status != 'approved':
+            # 核准：扣除餘額
             _update_leave_balance(conn, old['staff_id'], old['leave_type_id'],
-                                  str(old['start_date'])[:4], float(old['total_days']))
+                                  str(old['start_date'])[:4], delta)
+        elif action == 'reject' and old_status == 'approved':
+            # 已核准的假單被改拒絕：補回餘額
+            _update_leave_balance(conn, old['staff_id'], old['leave_type_id'],
+                                  str(old['start_date'])[:4], -delta)
     if row:
-        extra = f"{str(old['start_date'])} ~ {str(old['end_date'])} 共 {float(old['total_days'])} 天"
+        total_hours = old.get('total_hours')
+        duration_str = f"{float(total_hours)} 小時" if total_hours else f"{float(old['total_days'])} 天"
+        extra = f"{str(old['start_date'])} ~ {str(old['end_date'])} 共 {duration_str}"
         if review_note: extra += f"\n審核意見：{review_note}"
         _notify_review_result(old['staff_id'], '請假申請', action, extra)
     return jsonify(leave_req_row(row)) if row else ('', 404)
@@ -3523,6 +3549,13 @@ def api_leave_request_review(rid):
 @require_module('leave')
 def api_leave_request_delete(rid):
     with get_db() as conn:
+        old = conn.execute("SELECT * FROM leave_requests WHERE id=%s", (rid,)).fetchone()
+        if not old:
+            return jsonify({'error': '找不到假單'}), 404
+        # 若已核准，刪除前先補回餘額
+        if old['status'] == 'approved':
+            _update_leave_balance(conn, old['staff_id'], old['leave_type_id'],
+                                  str(old['start_date'])[:4], -float(old['total_days']))
         conn.execute("DELETE FROM leave_requests WHERE id=%s", (rid,))
     return jsonify({'deleted': rid})
 
