@@ -2813,8 +2813,15 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <div><label class="form-label">帳號 *</label><input class="form-input" id="aam-username" placeholder="英文/數字" autocapitalize="none"></div>
         <div><label class="form-label">顯示名稱</label><input class="form-input" id="aam-display" placeholder="選填"></div>
       </div>
+      <div id="aam-current-pw-wrap" style="display:none;margin-bottom:12px">
+        <label class="form-label">目前密碼</label>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input class="form-input" id="aam-current-pw" readonly style="flex:1;background:var(--bg);color:var(--muted);font-family:'DM Mono',monospace;letter-spacing:1px" type="password">
+          <button type="button" class="btn btn-outline btn-sm" onclick="toggleAamCurrentPw()" id="aam-current-pw-toggle" style="white-space:nowrap">顯示</button>
+        </div>
+      </div>
       <div class="form-row">
-        <div><label class="form-label">密碼</label><input class="form-input" type="password" id="aam-password" placeholder="新增必填，編輯留空不改"><div style="font-size:11px;color:var(--muted);margin-top:3px" id="aam-pw-hint"></div></div>
+        <div><label class="form-label">新密碼</label><input class="form-input" type="password" id="aam-password" placeholder="新增必填，編輯留空不改"><div style="font-size:11px;color:var(--muted);margin-top:3px" id="aam-pw-hint"></div></div>
         <div><label class="form-label">狀態</label><select class="form-input" id="aam-active"><option value="1">啟用</option><option value="0">停用</option></select></div>
       </div>
       <div style="margin-bottom:14px">
@@ -8197,6 +8204,14 @@ function openAdminAccModal(id=null) {
   document.getElementById('aam-title').textContent = id ? '編輯帳號' : '新增帳號';
   document.getElementById('aam-password').value = '';
   document.getElementById('aam-pw-hint').textContent = id ? '留空不修改密碼' : '新增必填';
+  // 目前密碼欄位
+  const curPwWrap = document.getElementById('aam-current-pw-wrap');
+  const curPwInput = document.getElementById('aam-current-pw');
+  const curPwToggle = document.getElementById('aam-current-pw-toggle');
+  curPwWrap.style.display = 'none';
+  curPwInput.value = '';
+  curPwInput.type = 'password';
+  curPwToggle.textContent = '顯示';
   // render module checkboxes
   document.getElementById('aam-perms-list').innerHTML = ALL_MODULES.map(m =>
     `<label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px">
@@ -8211,6 +8226,10 @@ function openAdminAccModal(id=null) {
     document.getElementById('aam-is-super').checked = !!a.is_super;
     const perms = a.permissions||[];
     document.querySelectorAll('.aam-mod-cb').forEach(cb => { cb.checked = perms.includes(cb.dataset.mod); });
+    if (a.password_plain) {
+      curPwWrap.style.display = 'block';
+      curPwInput.value = a.password_plain;
+    }
   } else {
     document.getElementById('aam-username').value = '';
     document.getElementById('aam-display').value  = '';
@@ -8221,6 +8240,12 @@ function openAdminAccModal(id=null) {
   document.getElementById('adminacc-modal').style.display = 'flex';
 }
 function closeAdminAccModal() { document.getElementById('adminacc-modal').style.display = 'none'; }
+function toggleAamCurrentPw() {
+  const inp = document.getElementById('aam-current-pw');
+  const btn = document.getElementById('aam-current-pw-toggle');
+  if (inp.type === 'password') { inp.type = 'text'; btn.textContent = '隱藏'; }
+  else { inp.type = 'password'; btn.textContent = '顯示'; }
+}
 async function saveAdminAcc() {
   const id       = document.getElementById('aam-id').value;
   const username = document.getElementById('aam-username').value.trim();

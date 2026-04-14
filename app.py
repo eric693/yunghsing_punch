@@ -299,6 +299,7 @@ def init_db():
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS store_id INT REFERENCES stores(id) ON DELETE SET NULL",
         "ALTER TABLE punch_locations ADD COLUMN IF NOT EXISTS store_id INT REFERENCES stores(id) ON DELETE SET NULL",
         "ALTER TABLE admin_accounts ADD COLUMN IF NOT EXISTS store_ids JSONB DEFAULT '[]'",
+        "ALTER TABLE admin_accounts ADD COLUMN IF NOT EXISTS password_plain TEXT DEFAULT ''",
         "ALTER TABLE schedule_requests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()",
         """CREATE TABLE IF NOT EXISTS shift_staffing_requirements (
             id            SERIAL PRIMARY KEY,
@@ -545,6 +546,7 @@ def _admin_row(r):
     if not r: return None
     d = dict(r)
     d.pop('password_hash', None)
+    if d.get('password_plain') is None: d['password_plain'] = ''
     perms = d.get('permissions')
     if isinstance(perms, str):
         try: d['permissions'] = _json.loads(perms)
@@ -583,9 +585,9 @@ def api_admin_account_create():
     with get_db() as conn:
         try:
             row = conn.execute("""
-                INSERT INTO admin_accounts (username, password_hash, display_name, permissions, is_super, active)
-                VALUES (%s,%s,%s,%s,%s,%s) RETURNING *
-            """, (username, _hash_pw(password), b.get('display_name','').strip(),
+                INSERT INTO admin_accounts (username, password_hash, password_plain, display_name, permissions, is_super, active)
+                VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING *
+            """, (username, _hash_pw(password), password, b.get('display_name','').strip(),
                   _json.dumps(perms), bool(b.get('is_super', False)), True)).fetchone()
         except Exception as e:
             if 'unique' in str(e).lower(): return jsonify({'error': '帳號已存在'}), 409
@@ -604,9 +606,9 @@ def api_admin_account_update(aid):
         if password:
             if len(password) < 4: return jsonify({'error': '密碼至少 4 個字元'}), 400
             row = conn.execute("""
-                UPDATE admin_accounts SET username=%s, password_hash=%s, display_name=%s,
+                UPDATE admin_accounts SET username=%s, password_hash=%s, password_plain=%s, display_name=%s,
                   permissions=%s, is_super=%s, active=%s WHERE id=%s RETURNING *
-            """, (username, _hash_pw(password), b.get('display_name','').strip(),
+            """, (username, _hash_pw(password), password, b.get('display_name','').strip(),
                   _json.dumps(perms), bool(b.get('is_super', False)),
                   bool(b.get('active', True)), aid)).fetchone()
         else:
