@@ -5064,15 +5064,76 @@ def _notify_review_result(staff_id, category, action, extra_info=''):
 import csv
 import io
 
+# ─── Excel 匯出共用工具 ────────────────────────────────────────────
+def _xl_workbook(sheet_name='Sheet1'):
+    import openpyxl
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = sheet_name
+    return wb, ws
+
+def _xl_write_header(ws, headers, col_widths):
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    thin = Border(
+        left=Side(style='thin', color='CCCCCC'), right=Side(style='thin', color='CCCCCC'),
+        top=Side(style='thin',  color='CCCCCC'), bottom=Side(style='thin', color='CCCCCC'),
+    )
+    hdr_fill  = PatternFill('solid', fgColor='0F1C3A')
+    hdr_font  = Font(bold=True, color='FFFFFF', name='Calibri', size=11)
+    center    = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    for ci, (h, w) in enumerate(zip(headers, col_widths), 1):
+        cell = ws.cell(row=1, column=ci, value=h)
+        cell.font = hdr_font; cell.fill = hdr_fill
+        cell.alignment = center; cell.border = thin
+        ws.column_dimensions[cell.column_letter].width = w
+    ws.row_dimensions[1].height = 22
+    ws.freeze_panes = 'A2'
+    ws.auto_filter.ref = ws.dimensions
+
+def _xl_write_rows(ws, data_rows, num_cols, number_cols=None):
+    from openpyxl.styles import Alignment, PatternFill, Border, Side, numbers
+    thin = Border(
+        left=Side(style='thin', color='CCCCCC'), right=Side(style='thin', color='CCCCCC'),
+        top=Side(style='thin',  color='CCCCCC'), bottom=Side(style='thin', color='CCCCCC'),
+    )
+    even_fill = PatternFill('solid', fgColor='F4F6FA')
+    center    = Alignment(horizontal='center', vertical='center')
+    left      = Alignment(horizontal='left',   vertical='center')
+    number_cols = set(number_cols or [])
+    for ri, row_vals in enumerate(data_rows, 2):
+        fill = even_fill if ri % 2 == 0 else None
+        for ci, v in enumerate(row_vals, 1):
+            cell = ws.cell(row=ri, column=ci, value=v)
+            if fill: cell.fill = fill
+            cell.border = thin
+            if ci in number_cols and isinstance(v, (int, float)):
+                cell.alignment = center
+                cell.number_format = '#,##0.00'
+            else:
+                cell.alignment = center if isinstance(v, (int, float, type(None))) else left
+
+def _xl_response(wb, filename):
+    from io import BytesIO
+    from flask import Response
+    buf = BytesIO()
+    wb.save(buf); buf.seek(0)
+    return Response(
+        buf.read(),
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={'Content-Disposition': f'attachment; filename={filename}'}
+    )
+# ──────────────────────────────────────────────────────────────────
+
+
 @app.route('/api/export/attendance', methods=['GET'])
 @login_required
 def api_export_attendance():
-    """匯出月度出勤明細 CSV"""
+    """匯出月度出勤明細 Excel"""
     month    = request.args.get('month', '')
     staff_id = request.args.get('staff_id', '')
     if not month:
-        from datetime import date as _de
-        month = _de.today().strftime('%Y-%m')
+        month = _dt.now(TW_TZ).strftime('%Y-%m')
 
     conds, params = ["TO_CHAR(pr.punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s"], [month]
     if staff_id:
@@ -5101,44 +5162,29 @@ def api_export_attendance():
 
     PUNCH_LABEL = {'in':'上班打卡','out':'下班打卡','break_out':'休息開始','break_in':'休息結束'}
 
-    output = io.StringIO()
-    output.write('\ufeff')  # UTF-8 BOM for Excel
-    writer = csv.writer(output)
-    writer.writerow(['員工代碼','姓名','部門','職稱','日期','打卡類型','時間','補打卡','操作人','GPS距離(m)','地點','備註'])
-
-    for r in rows:
-        writer.writerow([
-            r['employee_code'] or '',
-            r['staff_name'],
-            r['department']    or '',
-            r['role']          or '',
-            str(r['work_date']),
-            PUNCH_LABEL.get(r['punch_type'], r['punch_type']),
-            r['punch_time'],
-            '是' if r['is_manual'] else '',
-            r['manual_by']     or '',
-            r['gps_distance']  if r['gps_distance'] is not None else '',
-            r['location_name'] or '',
-            r['note']          or '',
-        ])
-
-    csv_content = output.getvalue()
-    from flask import Response
-    return Response(
-        csv_content.encode('utf-8-sig'),
-        mimetype='text/csv; charset=utf-8',
-        headers={'Content-Disposition': f'attachment; filename=attendance_{month}.csv'}
-    )
+    wb, ws = _xl_workbook(f'{month} 出勤明細')
+    headers = ['員工代碼','姓名','部門','職稱','日期','打卡類型','時間','補打卡','操作人','GPS距離(m)','地點','備註']
+    widths  = [10, 10, 12, 12, 12, 10, 8, 7, 10, 11, 14, 20]
+    _xl_write_header(ws, headers, widths)
+    _xl_write_rows(ws, [
+        [r['employee_code'] or '', r['staff_name'], r['department'] or '', r['role'] or '',
+         str(r['work_date']), PUNCH_LABEL.get(r['punch_type'], r['punch_type']),
+         r['punch_time'], '是' if r['is_manual'] else '',
+         r['manual_by'] or '',
+         float(r['gps_distance']) if r['gps_distance'] is not None else '',
+         r['location_name'] or '', r['note'] or '']
+        for r in rows
+    ], len(headers))
+    return _xl_response(wb, f'attendance_{month}.xlsx')
 
 
 @app.route('/api/export/attendance-summary', methods=['GET'])
 @login_required
 def api_export_attendance_summary():
-    """匯出月度出勤摘要 CSV（每人每天工時）"""
+    """匯出月度出勤摘要 Excel（每人每天工時）"""
     month = request.args.get('month', '')
     if not month:
-        from datetime import date as _df
-        month = _df.today().strftime('%Y-%m')
+        month = _dt.now(TW_TZ).strftime('%Y-%m')
 
     with get_db() as conn:
         rows = conn.execute("""
@@ -5162,37 +5208,28 @@ def api_export_attendance_summary():
             ORDER BY ps.name, (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date
         """, (month,)).fetchall()
 
-    output = io.StringIO()
-    output.write('\ufeff')
-    writer = csv.writer(output)
-    writer.writerow(['員工代碼','姓名','部門','職稱','日期','上班','下班','工時(h)','打卡次數','含補打'])
+    wb, ws = _xl_workbook(f'{month} 出勤摘要')
+    headers = ['員工代碼','姓名','部門','職稱','日期','上班','下班','工時(h)','打卡次數','含補打']
+    widths  = [10, 10, 12, 12, 12, 8, 8, 9, 9, 7]
+    _xl_write_header(ws, headers, widths)
 
+    data = []
     for r in rows:
         dur_h = ''
         if r['ci_ts'] and r['co_ts']:
-            from datetime import datetime as _dtx
             try:
-                ci = r['ci_ts'] if hasattr(r['ci_ts'], 'timestamp') else _dtx.fromisoformat(str(r['ci_ts']))
-                co = r['co_ts'] if hasattr(r['co_ts'], 'timestamp') else _dtx.fromisoformat(str(r['co_ts']))
+                ci = r['ci_ts'] if hasattr(r['ci_ts'], 'timestamp') else _dt.fromisoformat(str(r['ci_ts']))
+                co = r['co_ts'] if hasattr(r['co_ts'], 'timestamp') else _dt.fromisoformat(str(r['co_ts']))
                 dur_h = round((co - ci).total_seconds() / 3600, 2)
             except Exception:
                 pass
-        writer.writerow([
-            r['employee_code'] or '',
-            r['name'], r['department'] or '', r['role'] or '',
-            str(r['work_date']),
-            r['clock_in'] or '', r['clock_out'] or '',
-            dur_h,
-            r['punch_count'],
-            '是' if r['has_manual'] else '',
+        data.append([
+            r['employee_code'] or '', r['name'], r['department'] or '', r['role'] or '',
+            str(r['work_date']), r['clock_in'] or '', r['clock_out'] or '',
+            dur_h, r['punch_count'], '是' if r['has_manual'] else '',
         ])
-
-    from flask import Response
-    return Response(
-        output.getvalue().encode('utf-8-sig'),
-        mimetype='text/csv; charset=utf-8',
-        headers={'Content-Disposition': f'attachment; filename=attendance_summary_{month}.csv'}
-    )
+    _xl_write_rows(ws, data, len(headers), number_cols={8, 9})
+    return _xl_response(wb, f'attendance_summary_{month}.xlsx')
 
 
 @app.route('/api/attendance/anomaly-report', methods=['GET'])
@@ -5377,11 +5414,10 @@ def api_anomaly_report_excel():
 @app.route('/api/export/salary', methods=['GET'])
 @login_required
 def api_export_salary():
-    """匯出月度薪資明細 CSV"""
+    """匯出月度薪資明細 Excel"""
     month = request.args.get('month', '')
     if not month:
-        from datetime import date as _dg
-        month = _dg.today().strftime('%Y-%m')
+        month = _dt.now(TW_TZ).strftime('%Y-%m')
 
     with get_db() as conn:
         rows = conn.execute("""
@@ -5393,19 +5429,17 @@ def api_export_salary():
             ORDER BY ps.name
         """, (month,)).fetchall()
 
-    output = io.StringIO()
-    output.write('\ufeff')
-    writer = csv.writer(output)
-    writer.writerow([
-        '員工代碼','姓名','部門','職稱','薪資制度',
-        '工作日','出勤天數','請假天數','無薪假天數',
-        '津貼合計','扣除合計','加班費','實領金額','狀態','備註'
-    ])
+    wb, ws = _xl_workbook(f'{month} 薪資明細')
+    headers = ['員工代碼','姓名','部門','職稱','薪資制度',
+               '工作日','出勤天數','請假天數','無薪假天數',
+               '津貼合計','扣除合計','加班費','實領金額','狀態','備註']
+    widths  = [10, 10, 12, 12, 8, 8, 8, 8, 9, 11, 11, 10, 12, 8, 20]
+    _xl_write_header(ws, headers, widths)
 
+    data = []
     for r in rows:
-        items = r['items'] if isinstance(r['items'], list) else _json.loads(r['items'] or '[]')
         sal_type = r['salary_type'] or 'monthly'
-        writer.writerow([
+        data.append([
             r['employee_code'] or '', r['staff_name'],
             r['department'] or '', r['role'] or '',
             '時薪制' if sal_type == 'hourly' else '月薪制',
@@ -5416,26 +5450,24 @@ def api_export_salary():
             '已確認' if r['status'] == 'confirmed' else '草稿',
             r['note'] or '',
         ])
-
-    from flask import Response
-    return Response(
-        output.getvalue().encode('utf-8-sig'),
-        mimetype='text/csv; charset=utf-8',
-        headers={'Content-Disposition': f'attachment; filename=salary_{month}.csv'}
-    )
+    _xl_write_rows(ws, data, len(headers), number_cols={6,7,8,9,10,11,12,13})
+    return _xl_response(wb, f'salary_{month}.xlsx')
 
 
 @app.route('/api/export/leave', methods=['GET'])
 @login_required
 def api_export_leave():
-    """匯出請假記錄 CSV"""
+    """匯出請假記錄 Excel"""
     month    = request.args.get('month', '')
     year     = request.args.get('year',  '')
     staff_id = request.args.get('staff_id', '')
+    status   = request.args.get('status', '')  # 空白 = 全部
 
-    conds, params = ['lr.status=%s'], ['approved']
-    if month: conds.append("to_char(lr.start_date,'YYYY-MM')=%s"); params.append(month)
-    if year:  conds.append("EXTRACT(YEAR FROM lr.start_date)=%s"); params.append(int(year))
+    conds, params = ['TRUE'], []
+    if status:
+        conds.append("lr.status=%s"); params.append(status)
+    if month:    conds.append("to_char(lr.start_date,'YYYY-MM')=%s"); params.append(month)
+    if year:     conds.append("EXTRACT(YEAR FROM lr.start_date)=%s"); params.append(int(year))
     if staff_id: conds.append("lr.staff_id=%s"); params.append(int(staff_id))
 
     with get_db() as conn:
@@ -5449,28 +5481,297 @@ def api_export_leave():
             ORDER BY lr.start_date, ps.name
         """, params).fetchall()
 
-    output = io.StringIO()
-    output.write('\ufeff')
-    writer = csv.writer(output)
-    writer.writerow(['員工代碼','姓名','部門','假別','薪資倍率','開始日期','結束日期','天數','原因','代理人','狀態'])
+    wb, ws = _xl_workbook(f'請假記錄')
+    headers = ['員工代碼','姓名','部門','假別','薪資倍率','開始日期','結束日期','天數','原因','代理人','狀態']
+    widths  = [10, 10, 12, 10, 8, 12, 12, 7, 24, 10, 8]
+    _xl_write_header(ws, headers, widths)
 
     PAY_LABEL = {1.0:'全薪', 0.5:'半薪', 0.0:'無薪'}
-    for r in rows:
-        writer.writerow([
-            r['employee_code'] or '', r['staff_name'], r['department'] or '',
-            r['leave_type_name'], PAY_LABEL.get(float(r['pay_rate']), f"{r['pay_rate']}倍"),
-            str(r['start_date']), str(r['end_date']),
-            float(r['total_days']),
-            r['reason'] or '', r['substitute_name'] or '',
-            {'approved':'已核准','rejected':'已退回','pending':'待審核'}.get(r['status'], r['status']),
-        ])
+    STATUS_LABEL = {'approved':'已核准','rejected':'已退回','pending':'待審核'}
+    _xl_write_rows(ws, [
+        [r['employee_code'] or '', r['staff_name'], r['department'] or '',
+         r['leave_type_name'], PAY_LABEL.get(float(r['pay_rate']), f"{r['pay_rate']}倍"),
+         str(r['start_date']), str(r['end_date']), float(r['total_days']),
+         r['reason'] or '', r['substitute_name'] or '',
+         STATUS_LABEL.get(r['status'], r['status'])]
+        for r in rows
+    ], len(headers), number_cols={8})
+    return _xl_response(wb, f'leave_{month or year or "all"}.xlsx')
 
-    from flask import Response
-    return Response(
-        output.getvalue().encode('utf-8-sig'),
-        mimetype='text/csv; charset=utf-8',
-        headers={'Content-Disposition': f'attachment; filename=leave_{month or year or "all"}.csv'}
+
+@app.route('/api/export/overtime', methods=['GET'])
+@login_required
+def api_export_overtime():
+    """匯出加班記錄 Excel"""
+    month    = request.args.get('month', '')
+    staff_id = request.args.get('staff_id', '')
+    status   = request.args.get('status', '')
+
+    conds, params = ['TRUE'], []
+    if month:    conds.append("to_char(r.request_date,'YYYY-MM')=%s"); params.append(month)
+    if staff_id: conds.append("r.staff_id=%s"); params.append(int(staff_id))
+    if status:   conds.append("r.status=%s"); params.append(status)
+
+    with get_db() as conn:
+        rows = conn.execute(f"""
+            SELECT r.*, ps.name as staff_name, ps.employee_code, ps.department, ps.role
+            FROM overtime_requests r
+            JOIN punch_staff ps ON ps.id = r.staff_id
+            WHERE {' AND '.join(conds)}
+            ORDER BY r.request_date DESC, ps.name
+        """, params).fetchall()
+
+    DAY_TYPE = {'weekday':'平日','rest_day':'休息日','holiday':'國定假日','special':'特殊'}
+    STATUS_LABEL = {'approved':'已核准','rejected':'已退回','pending':'待審核'}
+
+    wb, ws = _xl_workbook('加班記錄')
+    headers = ['員工代碼','姓名','部門','職稱','加班日期','日別','開始時間','結束時間','時數','原因','加班費','狀態','審核人','審核備註']
+    widths  = [10, 10, 12, 12, 12, 8, 8, 8, 7, 24, 10, 8, 10, 20]
+    _xl_write_header(ws, headers, widths)
+    _xl_write_rows(ws, [
+        [r['employee_code'] or '', r['staff_name'], r['department'] or '', r['role'] or '',
+         str(r['request_date']), DAY_TYPE.get(r.get('day_type',''), r.get('day_type','')),
+         str(r['start_time'] or ''), str(r['end_time'] or ''),
+         float(r['ot_hours'] or 0),
+         r['reason'] or '', float(r['ot_pay'] or 0) if r.get('ot_pay') else '',
+         STATUS_LABEL.get(r['status'], r['status']),
+         r.get('reviewed_by') or '', r.get('review_note') or '']
+        for r in rows
+    ], len(headers), number_cols={9, 11})
+    return _xl_response(wb, f'overtime_{month or "all"}.xlsx')
+
+
+@app.route('/api/export/staff', methods=['GET'])
+@login_required
+def api_export_staff():
+    """匯出員工資料 Excel"""
+    dept     = request.args.get('department', '')
+    active   = request.args.get('active', '1')
+
+    conds, params = ['TRUE'], []
+    if active == '1': conds.append("active=TRUE")
+    elif active == '0': conds.append("active=FALSE")
+    if dept: conds.append("department=%s"); params.append(dept)
+
+    with get_db() as conn:
+        rows = conn.execute(f"""
+            SELECT id, employee_code, name, department, role, position_title,
+                   salary_type, base_salary, insured_salary, hourly_rate,
+                   daily_hours, hire_date, birth_date, active,
+                   username, line_user_id
+            FROM punch_staff
+            WHERE {' AND '.join(conds)}
+            ORDER BY department, name
+        """, params).fetchall()
+
+    wb, ws = _xl_workbook('員工資料')
+    headers = ['員工代碼','姓名','部門','職稱','職務','薪資制度',
+               '底薪','投保薪資','時薪','每日工時','到職日','生日','狀態','帳號','LINE綁定']
+    widths  = [10, 10, 12, 12, 12, 8, 11, 11, 10, 8, 12, 12, 6, 12, 8]
+    _xl_write_header(ws, headers, widths)
+    _xl_write_rows(ws, [
+        [r['employee_code'] or '', r['name'], r['department'] or '', r['role'] or '',
+         r['position_title'] or '',
+         '時薪制' if r['salary_type'] == 'hourly' else '月薪制',
+         float(r['base_salary'] or 0), float(r['insured_salary'] or 0),
+         float(r['hourly_rate'] or 0), float(r['daily_hours'] or 8),
+         str(r['hire_date']) if r['hire_date'] else '',
+         str(r['birth_date']) if r['birth_date'] else '',
+         '在職' if r['active'] else '離職',
+         r['username'] or '', '已綁定' if r['line_user_id'] else '']
+        for r in rows
+    ], len(headers), number_cols={7, 8, 9, 10})
+    return _xl_response(wb, 'staff_list.xlsx')
+
+
+@app.route('/api/export/training', methods=['GET'])
+@login_required
+def api_export_training():
+    """匯出訓練記錄 Excel"""
+    staff_id = request.args.get('staff_id', '')
+    category = request.args.get('category', '')
+
+    conds, params = ['TRUE'], []
+    if staff_id: conds.append("tr.staff_id=%s"); params.append(int(staff_id))
+    if category: conds.append("tr.category=%s"); params.append(category)
+
+    with get_db() as conn:
+        rows = conn.execute(f"""
+            SELECT tr.*, ps.name AS staff_name, ps.department
+            FROM training_records tr
+            JOIN punch_staff ps ON tr.staff_id = ps.id
+            WHERE {' AND '.join(conds)}
+            ORDER BY tr.expiry_date ASC NULLS LAST, ps.name
+        """, params).fetchall()
+
+    from datetime import date as _today_d
+    today = _today_d.today()
+
+    CATEGORY_ZH = {'safety':'安全衛生','fire':'消防','food':'食品衛生',
+                   'professional':'專業技能','general':'一般訓練'}
+
+    wb, ws = _xl_workbook('訓練記錄')
+    headers = ['員工姓名','部門','課程名稱','類別','完訓日期','到期日','證書號碼','剩餘天數','狀態','備註']
+    widths  = [10, 12, 24, 10, 12, 12, 16, 9, 10, 20]
+    _xl_write_header(ws, headers, widths)
+
+    from openpyxl.styles import PatternFill
+    warn_fill = PatternFill('solid', fgColor='FFF3CD')
+    err_fill  = PatternFill('solid', fgColor='FDECEA')
+
+    data = []
+    row_colors = []
+    for r in rows:
+        expiry = str(r['expiry_date']) if r['expiry_date'] else ''
+        days_left = ''
+        status = '無到期日'
+        color = None
+        if r['expiry_date']:
+            ed = r['expiry_date'] if hasattr(r['expiry_date'], 'year') else _today_d.fromisoformat(str(r['expiry_date']))
+            days_left = (ed - today).days
+            if days_left < 0:
+                status = '已過期'; color = 'err'
+            elif days_left <= 60:
+                status = '即將到期'; color = 'warn'
+            else:
+                status = '有效'
+        data.append([r['staff_name'], r['department'] or '',
+                     r['course_name'], CATEGORY_ZH.get(r['category'], r['category']),
+                     str(r['completed_date']) if r['completed_date'] else '',
+                     expiry, r['certificate_no'] or '',
+                     days_left, status, r['note'] or ''])
+        row_colors.append(color)
+
+    from openpyxl.styles import Alignment, Border, Side
+    thin = Border(
+        left=Side(style='thin', color='CCCCCC'), right=Side(style='thin', color='CCCCCC'),
+        top=Side(style='thin',  color='CCCCCC'), bottom=Side(style='thin', color='CCCCCC'),
     )
+    even_fill = PatternFill('solid', fgColor='F4F6FA')
+    center    = Alignment(horizontal='center', vertical='center')
+    left_al   = Alignment(horizontal='left', vertical='center')
+    for ri, (row_vals, color) in enumerate(zip(data, row_colors), 2):
+        fill = err_fill if color == 'err' else warn_fill if color == 'warn' else (even_fill if ri % 2 == 0 else None)
+        for ci, v in enumerate(row_vals, 1):
+            cell = ws.cell(row=ri, column=ci, value=v)
+            if fill: cell.fill = fill
+            cell.border = thin
+            cell.alignment = center if isinstance(v, (int, float, type(None))) else left_al
+    return _xl_response(wb, 'training_records.xlsx')
+
+
+@app.route('/api/export/expense', methods=['GET'])
+@login_required
+def api_export_expense():
+    """匯出費用報帳 Excel"""
+    month    = request.args.get('month', '')
+    staff_id = request.args.get('staff_id', '')
+    status   = request.args.get('status', '')
+
+    conds, params = ['TRUE'], []
+    if month:    conds.append("to_char(ec.expense_date,'YYYY-MM')=%s"); params.append(month)
+    if staff_id: conds.append("ec.staff_id=%s"); params.append(int(staff_id))
+    if status:   conds.append("ec.status=%s"); params.append(status)
+
+    with get_db() as conn:
+        rows = conn.execute(f"""
+            SELECT ec.*, ps.name as staff_name, ps.employee_code, ps.department
+            FROM expense_claims ec
+            JOIN punch_staff ps ON ps.id = ec.staff_id
+            WHERE {' AND '.join(conds)}
+            ORDER BY ec.expense_date DESC
+        """, params).fetchall()
+
+    STATUS_LABEL = {'approved':'已核准','rejected':'已退回','pending':'待審核'}
+
+    wb, ws = _xl_workbook('費用報帳')
+    headers = ['員工代碼','姓名','部門','費用日期','標題','金額','說明','狀態','審核人','審核意見','申請時間']
+    widths  = [10, 10, 12, 12, 24, 11, 30, 8, 10, 24, 16]
+    _xl_write_header(ws, headers, widths)
+    _xl_write_rows(ws, [
+        [r['employee_code'] or '', r['staff_name'], r['department'] or '',
+         str(r['expense_date']) if r.get('expense_date') else '',
+         r['title'] or '', float(r['amount'] or 0),
+         r['note'] or '',
+         STATUS_LABEL.get(r['status'], r['status']),
+         r.get('reviewed_by') or '', r.get('review_note') or '',
+         str(r['created_at'])[:16] if r.get('created_at') else '']
+        for r in rows
+    ], len(headers), number_cols={6})
+    return _xl_response(wb, f'expense_{month or "all"}.xlsx')
+
+
+@app.route('/api/export/leave-balance', methods=['GET'])
+@login_required
+def api_export_leave_balance():
+    """匯出請假餘額 Excel"""
+    year = request.args.get('year', '') or str(_dt.now(TW_TZ).year)
+
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT lb.*, ps.name as staff_name, ps.employee_code, ps.department,
+                   lt.name as leave_type_name, lt.code as leave_code, lt.max_days
+            FROM leave_balances lb
+            JOIN punch_staff ps ON ps.id = lb.staff_id
+            JOIN leave_types  lt ON lt.id = lb.leave_type_id
+            WHERE lb.year = %s
+            ORDER BY ps.department, ps.name, lt.sort_order
+        """, (int(year),)).fetchall()
+
+    wb, ws = _xl_workbook(f'{year} 請假餘額')
+    headers = ['員工代碼','姓名','部門','假別','假別代碼','年度上限(天)','已核准(天)','剩餘(天)']
+    widths  = [10, 10, 12, 12, 8, 11, 11, 10]
+    _xl_write_header(ws, headers, widths)
+    _xl_write_rows(ws, [
+        [r['employee_code'] or '', r['staff_name'], r['department'] or '',
+         r['leave_type_name'], r['leave_code'] or '',
+         float(r['max_days']) if r['max_days'] is not None else '無限制',
+         float(r['used_days'] or 0),
+         round(float(r['max_days'] or 0) - float(r['used_days'] or 0), 2)
+         if r['max_days'] is not None else '']
+        for r in rows
+    ], len(headers), number_cols={6, 7, 8})
+    return _xl_response(wb, f'leave_balance_{year}.xlsx')
+
+
+@app.route('/api/export/performance', methods=['GET'])
+@login_required
+def api_export_performance():
+    """匯出績效考核 Excel"""
+    period   = request.args.get('period', '')
+    staff_id = request.args.get('staff_id', '')
+
+    conds, params = ['TRUE'], []
+    if period:   conds.append("pr.period_label ILIKE %s"); params.append(f'%{period}%')
+    if staff_id: conds.append("pr.staff_id=%s"); params.append(int(staff_id))
+
+    with get_db() as conn:
+        rows = conn.execute(f"""
+            SELECT pr.*,
+                   ps.name AS staff_name, ps.employee_code, ps.department, ps.role,
+                   pt.name AS template_name
+            FROM performance_reviews pr
+            JOIN punch_staff ps ON ps.id = pr.staff_id
+            LEFT JOIN performance_templates pt ON pt.id = pr.template_id
+            WHERE {' AND '.join(conds)}
+            ORDER BY pr.reviewed_at DESC
+        """, params).fetchall()
+
+    wb, ws = _xl_workbook('績效考核')
+    headers = ['員工代碼','姓名','部門','職稱','考核期間','考核表','分數','滿分','百分比','等級','考核人','備註','考核日期']
+    widths  = [10, 10, 12, 12, 16, 16, 8, 8, 9, 6, 10, 30, 16]
+    _xl_write_header(ws, headers, widths)
+    _xl_write_rows(ws, [
+        [r['employee_code'] or '', r['staff_name'], r['department'] or '', r['role'] or '',
+         r['period_label'] or '', r['template_name'] or '',
+         float(r['total_score'] or 0), float(r['max_score'] or 100),
+         round(float(r['total_score'] or 0) / float(r['max_score'] or 100) * 100, 1),
+         r['grade'] or '',
+         r['reviewer'] or '', r['comments'] or '',
+         str(r['reviewed_at'])[:16] if r.get('reviewed_at') else '']
+        for r in rows
+    ], len(headers), number_cols={7, 8, 9})
+    return _xl_response(wb, f'performance_{period or "all"}.xlsx')
 
 
 # ── Patch existing review functions with LINE notifications ──────
@@ -7463,7 +7764,7 @@ def api_finance_ocr():
 @app.route('/api/finance/export', methods=['GET'])
 @require_module('finance')
 def api_finance_export():
-    import csv, io as _io
+    """匯出財務記錄 Excel"""
     month = request.args.get('month', '')
     conds, params = ['TRUE'], []
     if month:
@@ -7477,17 +7778,40 @@ def api_finance_export():
             WHERE {' AND '.join(conds)}
             ORDER BY fr.record_date, fr.id
         """, params).fetchall()
-    out = _io.StringIO()
-    w = csv.writer(out)
-    w.writerow(['日期','類型','類別','標題','金額','稅額','廠商','單據號碼','備註'])
+
+    wb, ws = _xl_workbook('財務記錄')
+    headers = ['日期','類型','類別','標題','金額','稅額','廠商','單據號碼','備註']
+    widths  = [12, 7, 14, 24, 12, 10, 16, 14, 24]
+    _xl_write_header(ws, headers, widths)
+
+    total_income = 0.0; total_expense = 0.0
+    data = []
     for r in rows:
-        w.writerow([str(r['record_date']), '收入' if r['type']=='income' else '支出',
-                    r['category_name'] or '', r['title'], r['amount'], r['tax_amount'] or 0,
-                    r['vendor'] or '', r['invoice_no'] or '', r['note'] or ''])
-    fname = f"finance_{month or 'all'}.csv"
-    return (('\ufeff' + out.getvalue()).encode('utf-8'),
-            200, {'Content-Type': 'text/csv; charset=utf-8',
-                  'Content-Disposition': f'attachment; filename={fname}'})
+        amt = float(r['amount'] or 0); tax = float(r['tax_amount'] or 0)
+        t = '收入' if r['type'] == 'income' else '支出'
+        if r['type'] == 'income': total_income += amt
+        else: total_expense += amt
+        data.append([str(r['record_date']), t, r['category_name'] or '',
+                     r['title'], amt, tax if tax else '',
+                     r['vendor'] or '', r['invoice_no'] or '', r['note'] or ''])
+    _xl_write_rows(ws, data, len(headers), number_cols={5, 6})
+
+    # 合計列
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    summary_row = ws.max_row + 2
+    ws.cell(row=summary_row, column=1, value='合計').font = Font(bold=True)
+    ws.cell(row=summary_row, column=2, value='收入').font = Font(bold=True, color='2E7D32')
+    ws.cell(row=summary_row, column=5, value=total_income).number_format = '#,##0.00'
+    ws.cell(row=summary_row, column=5).font = Font(bold=True, color='2E7D32')
+    ws.cell(row=summary_row+1, column=2, value='支出').font = Font(bold=True, color='C62828')
+    ws.cell(row=summary_row+1, column=5, value=total_expense).number_format = '#,##0.00'
+    ws.cell(row=summary_row+1, column=5).font = Font(bold=True, color='C62828')
+    net = total_income - total_expense
+    ws.cell(row=summary_row+2, column=2, value='淨額').font = Font(bold=True)
+    ws.cell(row=summary_row+2, column=5, value=net).number_format = '#,##0.00'
+    ws.cell(row=summary_row+2, column=5).font = Font(bold=True, color='0D47A1' if net >= 0 else 'C62828')
+
+    return _xl_response(wb, f'finance_{month or "all"}.xlsx')
 
 # ── Finance Settings & Financial Statements ────────────────────
 
