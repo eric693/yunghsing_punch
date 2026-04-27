@@ -4613,18 +4613,20 @@ def api_salary_records_list():
 @app.route('/api/salary/records/generate', methods=['POST'])
 @require_module('salary')
 def api_salary_generate():
-    """自動產生或更新該月薪資"""
+    """自動產生或更新該月薪資
+    force=True：強制重算已確認薪資（狀態改回 draft）
+    force=False（預設）：跳過已確認薪資，不覆蓋
+    """
     b     = request.get_json(force=True)
     month = b.get('month', '').strip()
+    force = bool(b.get('force', False))
     if not month: return jsonify({'error': '請指定月份'}), 400
     with get_db() as conn:
-        # Per-month advisory lock (transaction-scoped): prevents concurrent generation
-        # for the same month. Different months can run in parallel.
         try:
-            month_int = int(month.replace('-', ''))  # e.g. 202604
+            month_int = int(month.replace('-', ''))
         except ValueError:
             return jsonify({'error': '月份格式錯誤，請使用 YYYY-MM'}), 400
-        lock_key = 4_200_000_000 + month_int  # stable bigint, unique per month
+        lock_key = 4_200_000_000 + month_int
         locked = conn.execute(
             "SELECT pg_try_advisory_xact_lock(%s)", (lock_key,)
         ).fetchone()[0]
@@ -4635,7 +4637,18 @@ def api_salary_generate():
             "SELECT * FROM punch_staff WHERE active=TRUE"
         ).fetchall()
         generated = 0
+        skipped   = 0
         for staff in staff_list:
+            # 非強制模式：跳過已確認的薪資，不覆蓋已確認金額
+            if not force:
+                existing = conn.execute(
+                    "SELECT status FROM salary_records WHERE staff_id=%s AND month=%s",
+                    (staff['id'], month)
+                ).fetchone()
+                if existing and existing['status'] == 'confirmed':
+                    skipped += 1
+                    continue
+
             data = _auto_generate_salary(conn, dict(staff), month)
             items_json = _json.dumps(data['items'], ensure_ascii=False)
             conn.execute("""
@@ -4648,8 +4661,7 @@ def api_salary_generate():
                   SET base_salary=%s, insured_salary=%s, work_days=%s, actual_days=%s,
                       leave_days=%s, unpaid_days=%s, ot_pay=%s, allowance_total=%s,
                       deduction_total=%s, net_pay=%s, income_tax_withheld=%s, items=%s::jsonb,
-                      status=CASE WHEN salary_records.status='confirmed' THEN 'confirmed' ELSE 'draft' END,
-                      updated_at=NOW()
+                      status='draft', updated_at=NOW()
             """, (
                 data['staff_id'], month, data['base_salary'], data['insured_salary'],
                 data['work_days'], data['actual_days'], data['leave_days'], data['unpaid_days'],
@@ -4660,7 +4672,7 @@ def api_salary_generate():
                 data['deduction_total'], data['net_pay'], data['income_tax_withheld'], items_json,
             ))
             generated += 1
-    return jsonify({'ok': True, 'generated': generated, 'month': month})
+    return jsonify({'ok': True, 'generated': generated, 'skipped': skipped, 'month': month})
 
 @app.route('/api/salary/records/<int:rid>', methods=['GET'])
 @require_module('salary')

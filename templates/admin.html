@@ -988,7 +988,8 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <span class="filter-label">月份</span>
         <input class="filter-input" type="month" id="sal-month" onchange="loadSalaryRecords()">
         <button class="btn btn-outline btn-sm" onclick="previewSalary()">預覽計算明細</button>
-        <button class="btn btn-primary btn-sm" onclick="generateSalary()">確認產生薪資</button>
+        <button class="btn btn-primary btn-sm" onclick="generateSalary(false)">產生薪資（草稿）</button>
+        <button class="btn btn-ghost btn-sm" onclick="generateSalary(true)" style="color:var(--red);border-color:var(--red)" title="強制重算，已確認薪資也會被重置為草稿">強制重算已確認</button>
         <button class="btn btn-outline btn-sm" id="sal-confirm-all-btn" onclick="confirmAllSalary()" style="display:none">全部確認</button>
         <button class="btn btn-outline btn-sm" id="sal-bulk-print-btn" onclick="bulkPrintPayslips()" style="display:none">列印全部薪資單</button>
         <button class="btn btn-outline btn-sm" onclick="exportSalaryCSV()">匯出薪資 Excel</button>
@@ -1958,7 +1959,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         </div>
         <div style="padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px">
           <button class="btn btn-outline" onclick="document.getElementById('salary-preview-modal').style.display='none'">關閉</button>
-          <button class="btn btn-primary" onclick="document.getElementById('salary-preview-modal').style.display='none';generateSalary()">確認產生薪資</button>
+          <button class="btn btn-primary" onclick="document.getElementById('salary-preview-modal').style.display='none';generateSalary(false)">產生薪資草稿</button>
         </div>
       </div>
     </div>
@@ -5697,13 +5698,20 @@ async function loadSalaryRecords() {
   document.getElementById('sal-total-net').textContent    = `實領：$${fmtNum(totNet)}`;
 }
 
-async function generateSalary() {
+async function generateSalary(force=false) {
   const month = document.getElementById('sal-month').value;
   if (!month) { showToast('請選擇月份','error'); return; }
-  if (!confirm(`確定自動產生/更新 ${month} 的薪資記錄？`)) return;
-  const {ok,data} = await api('/api/salary/records/generate', apiJSON({month}));
+  if (force) {
+    if (!confirm(`⚠️ 強制重算：${month} 所有薪資（含已確認）都會重新計算並重置為「草稿」狀態。\n\n確定要繼續嗎？`)) return;
+  } else {
+    if (!confirm(`產生 ${month} 薪資草稿？\n（已確認的薪資不會變動）`)) return;
+  }
+  const {ok,data} = await api('/api/salary/records/generate', apiJSON({month, force}));
   if (!ok) return;
-  showToast(`已產生 ${data.generated} 筆薪資記錄`,'success'); await loadSalaryRecords();
+  let msg = `已產生 ${data.generated} 筆薪資記錄`;
+  if (data.skipped > 0) msg += `，${data.skipped} 筆已確認（跳過）`;
+  showToast(msg, 'success');
+  await loadSalaryRecords();
 }
 
 async function openSalDetail(id) {
