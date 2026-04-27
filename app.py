@@ -5454,28 +5454,41 @@ def api_export_salary():
             ORDER BY ps.name
         """, (month,)).fetchall()
 
+        leave_detail = conn.execute("""
+            SELECT lr.staff_id,
+                   COALESCE(SUM(CASE WHEN lt.code='personal' THEN lr.total_days ELSE 0 END), 0) AS personal_days,
+                   COALESCE(SUM(CASE WHEN lt.code='sick'     THEN lr.total_days ELSE 0 END), 0) AS sick_days
+            FROM leave_requests lr
+            JOIN leave_types lt ON lt.id = lr.leave_type_id
+            WHERE lr.status='approved' AND to_char(lr.start_date,'YYYY-MM')=%s
+            GROUP BY lr.staff_id
+        """, (month,)).fetchall()
+        leave_map = {r['staff_id']: r for r in leave_detail}
+
     wb, ws = _xl_workbook(f'{month} 薪資明細')
     headers = ['員工代碼','姓名','部門','職稱','薪資制度',
-               '工作日','出勤天數','請假天數','無薪假天數',
+               '工作日','出勤天數','請假天數','無薪假天數','事假天數','病假天數',
                '津貼合計','扣除合計','加班費','實領金額','狀態','備註']
-    widths  = [10, 10, 12, 12, 8, 8, 8, 8, 9, 11, 11, 10, 12, 8, 20]
+    widths  = [10, 10, 12, 12, 8, 8, 8, 8, 9, 8, 8, 11, 11, 10, 12, 8, 20]
     _xl_write_header(ws, headers, widths)
 
     data = []
     for r in rows:
         sal_type = r['salary_type'] or 'monthly'
+        ld = leave_map.get(r['staff_id'])
         data.append([
             r['employee_code'] or '', r['staff_name'],
             r['department'] or '', r['role'] or '',
             '時薪制' if sal_type == 'hourly' else '月薪制',
             float(r['work_days'] or 0), float(r['actual_days'] or 0),
             float(r['leave_days'] or 0), float(r['unpaid_days'] or 0),
+            float(ld['personal_days'] if ld else 0), float(ld['sick_days'] if ld else 0),
             float(r['allowance_total'] or 0), float(r['deduction_total'] or 0),
             float(r['ot_pay'] or 0), float(r['net_pay'] or 0),
             '已確認' if r['status'] == 'confirmed' else '草稿',
             r['note'] or '',
         ])
-    _xl_write_rows(ws, data, len(headers), number_cols={6,7,8,9,10,11,12,13})
+    _xl_write_rows(ws, data, len(headers), number_cols={6,7,8,9,10,11,12,13,14,15})
     return _xl_response(wb, f'salary_{month}.xlsx')
 
 

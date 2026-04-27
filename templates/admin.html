@@ -423,8 +423,8 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <input class="filter-input" type="month" id="sum-month" onchange="loadPunchSummary()">
         <span style="flex:1"></span>
         <a href="/staff" target="_blank" class="btn btn-outline btn-sm">員工系統</a>
-        <button class="btn btn-primary btn-sm" onclick="exportAttSummary()">匯出摘要 CSV</button>
-        <button class="btn btn-ghost btn-sm" onclick="exportAttDetail()">匯出明細 CSV</button>
+        <button class="btn btn-primary btn-sm" onclick="exportAttSummary()">匯出摘要 Excel</button>
+        <button class="btn btn-ghost btn-sm" onclick="exportAttDetail()">匯出明細 Excel</button>
       </div>
       <div class="card">
         <div class="table-wrap">
@@ -933,6 +933,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <span class="filter-label">年度</span>
         <select class="filter-input" id="leave-bal-year" onchange="loadLeaveBalances()" style="min-width:100px"></select>
         <button class="btn btn-outline btn-sm" onclick="initAnnualLeave()">自動計算特休（依年資）</button>
+        <button class="btn btn-ghost btn-sm" onclick="exportLeaveBalance()">匯出 Excel</button>
         <span style="flex:1"></span>
         <span id="leave-bal-note" style="font-size:12px;color:var(--muted)"></span>
       </div>
@@ -984,8 +985,8 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <button class="btn btn-primary btn-sm" onclick="generateSalary()">確認產生薪資</button>
         <button class="btn btn-outline btn-sm" id="sal-confirm-all-btn" onclick="confirmAllSalary()" style="display:none">全部確認</button>
         <button class="btn btn-outline btn-sm" id="sal-bulk-print-btn" onclick="bulkPrintPayslips()" style="display:none">列印全部薪資單</button>
-        <button class="btn btn-outline btn-sm" onclick="exportSalaryCSV()">匯出 CSV</button>
-        <button class="btn btn-ghost btn-sm" onclick="exportLeaveCSV()">匯出請假 CSV</button>
+        <button class="btn btn-outline btn-sm" onclick="exportSalaryCSV()">匯出薪資 Excel</button>
+        <button class="btn btn-ghost btn-sm" onclick="exportLeaveCSV()">匯出請假 Excel</button>
         <span style="flex:1"></span>
         <span id="sal-count" style="font-size:12px;color:var(--muted)"></span>
       </div>
@@ -1740,6 +1741,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <span class="filter-label">期間</span>
         <input type="month" id="perf-filter-period" class="filter-input">
         <button class="btn btn-primary btn-sm" onclick="loadPerfReviews()">查詢</button>
+        <button class="btn btn-ghost btn-sm" onclick="exportPerfExcel()">匯出 Excel</button>
       </div>
       <div class="table-wrap">
         <table class="data-table">
@@ -6319,6 +6321,22 @@ function exportLeaveCSV() {
   const month = document.getElementById('sal-month').value || document.getElementById('leave-req-month').value;
   if (!month) { showToast('請先選擇月份', 'error'); return; }
   window.open(`/api/export/leave?month=${month}`, '_blank');
+}
+
+function exportLeaveBalance() {
+  const year = document.getElementById('leave-bal-year')?.value || new Date().getFullYear();
+  window.open(`/api/export/leave-balance?year=${year}`, '_blank');
+}
+
+function exportPerfExcel() {
+  const staff = document.getElementById('perf-filter-staff')?.value || '';
+  const period = document.getElementById('perf-filter-period')?.value || '';
+  let url = '/api/export/performance';
+  const params = [];
+  if (staff)  params.push(`staff_id=${staff}`);
+  if (period) params.push(`period=${period}`);
+  if (params.length) url += '?' + params.join('&');
+  window.open(url, '_blank');
 }
 
 // ══════════════════════════════════════════════════════════════
