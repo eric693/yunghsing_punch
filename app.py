@@ -4240,9 +4240,47 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         daily_wage  = base_salary / 30 if base_salary > 0 else 0
         hourly_wage = daily_wage / daily_hours if daily_hours > 0 else 0
 
+    # ── 缺勤天數（提前計算，讓公式中的 actual_days 能正確扣除缺勤） ──
+    absent_days = 0
+    _absent_date_list = []
+    if _sal_cfg['auto_absent_deduction'] and salary_type == 'monthly' and scheduled_dates and daily_wage > 0:
+        _punch_rows2 = conn.execute("""
+            SELECT DISTINCT (punched_at AT TIME ZONE 'Asia/Taipei')::date as work_date
+            FROM punch_records WHERE staff_id=%s
+              AND TO_CHAR(punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s
+        """, (staff['id'], month)).fetchall()
+        _punched_dates2 = {
+            r['work_date'].isoformat() if hasattr(r['work_date'], 'isoformat') else str(r['work_date'])
+            for r in _punch_rows2
+        }
+        _mf2 = _d5.fromisoformat(_month_first)
+        _ml2 = _d5.fromisoformat(_month_last)
+        _leave_date_rows2 = conn.execute("""
+            SELECT start_date, end_date FROM leave_requests
+            WHERE staff_id=%s AND status='approved'
+              AND start_date <= %s AND end_date >= %s
+        """, (staff['id'], _month_last, _month_first)).fetchall()
+        _leave_date_set2 = set()
+        for _lr2 in _leave_date_rows2:
+            _ld2 = _lr2['start_date']
+            _le2 = _lr2['end_date']
+            if isinstance(_ld2, str): _ld2 = _d5.fromisoformat(_ld2)
+            if isinstance(_le2, str): _le2 = _d5.fromisoformat(_le2)
+            _ld2 = max(_ld2, _mf2)
+            _le2 = min(_le2, _ml2)
+            while _ld2 <= _le2:
+                _leave_date_set2.add(_ld2.isoformat())
+                _ld2 += _td5(days=1)
+        _absent_date_list = sorted(
+            ds for ds in scheduled_dates
+            if ds not in _punched_dates2 and ds not in _leave_date_set2
+               and _d5.fromisoformat(ds) < _today5
+        )
+        absent_days = len(_absent_date_list)
+
     # 公式額外變數（出勤/假別相關）
     _formula_extra = {
-        'actual_days':   actual_days,
+        'actual_days':   max(0.0, actual_days - absent_days),
         'work_days':     float(total_work_days),
         'leave_days':    leave_days,
         'unpaid_days':   unpaid_days,
@@ -4397,49 +4435,15 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
             deduction_total += deduct
 
     # ── 月薪制：缺勤扣款（可透過薪資計算設定關閉） ───────────────
-    absent_days = 0
-    if _sal_cfg['auto_absent_deduction'] and salary_type == 'monthly' and scheduled_dates and daily_wage > 0:
-        punch_rows = conn.execute("""
-            SELECT DISTINCT (punched_at AT TIME ZONE 'Asia/Taipei')::date as work_date
-            FROM punch_records WHERE staff_id=%s
-              AND TO_CHAR(punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s
-        """, (staff['id'], month)).fetchall()
-        punched_dates = {r['work_date'].isoformat() if hasattr(r['work_date'], 'isoformat') else str(r['work_date']) for r in punch_rows}
-        # 已核准請假日期集合（包含跨月請假，只取本月日期範圍）
-        _mf = _d5.fromisoformat(_month_first)
-        _ml = _d5.fromisoformat(_month_last)
-        leave_date_rows = conn.execute("""
-            SELECT start_date, end_date FROM leave_requests
-            WHERE staff_id=%s AND status='approved'
-              AND start_date <= %s AND end_date >= %s
-        """, (staff['id'], _month_last, _month_first)).fetchall()
-        leave_date_set = set()
-        for _lr in leave_date_rows:
-            _ld = _lr['start_date']
-            _le = _lr['end_date']
-            if isinstance(_ld, str): _ld = _d5.fromisoformat(_ld)
-            if isinstance(_le, str): _le = _d5.fromisoformat(_le)
-            _ld = max(_ld, _mf)
-            _le = min(_le, _ml)
-            while _ld <= _le:
-                leave_date_set.add(_ld.isoformat())
-                _ld += _td5(days=1)
-        # 缺勤 = 排班但未打卡且非假日，僅計算過去日期
-        absent_date_list = sorted(
-            ds for ds in scheduled_dates
-            if ds not in punched_dates and ds not in leave_date_set
-               and _d5.fromisoformat(ds) < _today5
-        )
-        absent_days = len(absent_date_list)
-        if absent_days > 0:
-            deduct = round(daily_wage * absent_days, 2)
-            sample = '、'.join(absent_date_list[:3]) + ('等' if absent_days > 3 else '')
-            items.append({
-                'id': 'absent', 'name': f'缺勤扣款（{absent_days} 天）', 'type': 'deduction',
-                'amount': deduct, 'formula': '',
-                'calc_note': f'{absent_days} 天 × 日薪 ${round(daily_wage, 0)}（{sample}）',
-            })
-            deduction_total += deduct
+    if absent_days > 0:
+        deduct = round(daily_wage * absent_days, 2)
+        sample = '、'.join(_absent_date_list[:3]) + ('等' if absent_days > 3 else '')
+        items.append({
+            'id': 'absent', 'name': f'缺勤扣款（{absent_days} 天）', 'type': 'deduction',
+            'amount': deduct, 'formula': '',
+            'calc_note': f'{absent_days} 天 × 日薪 ${round(daily_wage, 0)}（{sample}）',
+        })
+        deduction_total += deduct
 
     # ── 薪資所得扣繳稅款（可透過薪資計算設定關閉） ───────────────
     _TAX_THRESHOLD = 88501
