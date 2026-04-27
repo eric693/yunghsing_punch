@@ -182,6 +182,12 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
   .topbar-title { font-size: 15px; }
   .btn { font-size: 12px; padding: 7px 13px; }
 }
+.toggle-switch { position:relative; display:inline-block; width:44px; height:24px; cursor:pointer; }
+.toggle-switch input { opacity:0; width:0; height:0; }
+.toggle-slider { position:absolute; inset:0; background:#ccc; border-radius:24px; transition:.25s; }
+.toggle-slider:before { content:''; position:absolute; width:18px; height:18px; left:3px; bottom:3px; background:#fff; border-radius:50%; transition:.25s; }
+.toggle-switch input:checked + .toggle-slider { background:var(--accent); }
+.toggle-switch input:checked + .toggle-slider:before { transform:translateX(20px); }
 </style>
 </head>
 <body>
@@ -1010,6 +1016,61 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
 
     <!-- 薪資設定 -->
     <div id="salary-panel-settings" style="display:none">
+
+      <!-- 薪資計算規則設定 -->
+      <div class="card" style="margin-bottom:16px;padding:18px 20px">
+        <div class="card-title" style="padding:0;margin-bottom:14px">薪資計算規則</div>
+        <div style="display:flex;flex-direction:column;gap:14px;max-width:680px">
+
+          <!-- 請假扣款 -->
+          <div style="display:flex;align-items:flex-start;gap:16px;padding:12px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg)">
+            <div style="flex:1">
+              <div style="font-size:13px;font-weight:600;color:var(--text)">自動請假扣款</div>
+              <div style="font-size:12px;color:var(--muted);margin-top:3px;line-height:1.6">
+                <strong>開啟</strong>：系統自動依請假類型扣款（無薪假全扣、半薪假扣一半），適合大多數公司。<br>
+                <strong>關閉</strong>：請假扣款完全由「薪資項目」公式控制，避免與自訂公式重複扣款。
+              </div>
+            </div>
+            <label class="toggle-switch" style="flex-shrink:0;margin-top:2px">
+              <input type="checkbox" id="cfg-auto-leave" onchange="saveSalaryCalcSetting('auto_leave_deduction', this.checked)">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <!-- 缺勤扣款 -->
+          <div style="display:flex;align-items:flex-start;gap:16px;padding:12px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg)">
+            <div style="flex:1">
+              <div style="font-size:13px;font-weight:600;color:var(--text)">自動缺勤扣款</div>
+              <div style="font-size:12px;color:var(--muted);margin-top:3px;line-height:1.6">
+                <strong>開啟</strong>：有排班但未打卡也無請假的日期，系統自動扣日薪。<br>
+                <strong>關閉</strong>：不自動扣缺勤，由主管手動調整薪資明細處理。
+              </div>
+            </div>
+            <label class="toggle-switch" style="flex-shrink:0;margin-top:2px">
+              <input type="checkbox" id="cfg-auto-absent" onchange="saveSalaryCalcSetting('auto_absent_deduction', this.checked)">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <!-- 扣繳稅款 -->
+          <div style="display:flex;align-items:flex-start;gap:16px;padding:12px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg)">
+            <div style="flex:1">
+              <div style="font-size:13px;font-weight:600;color:var(--text)">自動計算扣繳稅款</div>
+              <div style="font-size:12px;color:var(--muted);margin-top:3px;line-height:1.6">
+                <strong>開啟</strong>：月薪資超過 NT$88,501 時自動扣 5%（薪資所得扣繳，年度憑單使用）。<br>
+                <strong>關閉</strong>：不自動計算，稅款由管理員手動在薪資明細中加入扣除項目。
+              </div>
+            </div>
+            <label class="toggle-switch" style="flex-shrink:0;margin-top:2px">
+              <input type="checkbox" id="cfg-auto-tax" onchange="saveSalaryCalcSetting('auto_income_tax', this.checked)">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+        </div>
+        <div id="sal-cfg-msg" style="font-size:12px;color:var(--green);margin-top:10px;min-height:14px"></div>
+      </div>
+
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
         <span id="sal-staff-count" style="font-size:13px;color:var(--muted)"></span>
         <a href="#" onclick="showPage('punch',event);switchPunchTab('staff')" style="font-size:12px;color:var(--accent)">管理員工 →</a>
@@ -5577,7 +5638,7 @@ function switchSalaryTab(tab) {
     document.getElementById('salary-panel-'+t).style.display=t===tab?'':'none';
   });
   if (tab==='calc')        loadSalaryRecords();
-  if (tab==='settings')    { loadSalaryStaff(); loadSalaryItems(); }
+  if (tab==='settings')    { loadSalaryCalcSettings(); loadSalaryStaff(); loadSalaryItems(); }
   if (tab==='items')       loadSalaryItems();
   if (tab==='withholding') initWithholdingTab();
   if (tab==='edi')         initEdiTab();
@@ -5950,6 +6011,32 @@ function printSalarySlip() {
 function fmtNum(n) {
   if (n===null||n===undefined) return '0';
   return Number(n).toLocaleString('zh-TW',{minimumFractionDigits:0,maximumFractionDigits:2});
+}
+
+// ── 薪資計算規則設定 ────────────────────────────────────────────
+async function loadSalaryCalcSettings() {
+  const { ok, data } = await api('/api/salary/calc-settings', {}, true);
+  if (!ok) return;
+  document.getElementById('cfg-auto-leave').checked  = !!data.auto_leave_deduction;
+  document.getElementById('cfg-auto-absent').checked = !!data.auto_absent_deduction;
+  document.getElementById('cfg-auto-tax').checked    = !!data.auto_income_tax;
+}
+
+async function saveSalaryCalcSetting(key, value) {
+  const { ok, data } = await api('/api/salary/calc-settings', apiJSON({ [key]: value }));
+  const msg = document.getElementById('sal-cfg-msg');
+  if (ok) {
+    // sync UI in case server corrected value
+    document.getElementById('cfg-auto-leave').checked  = !!data.settings.auto_leave_deduction;
+    document.getElementById('cfg-auto-absent').checked = !!data.settings.auto_absent_deduction;
+    document.getElementById('cfg-auto-tax').checked    = !!data.settings.auto_income_tax;
+    msg.textContent = '已儲存。下次產生薪資時生效。';
+    msg.style.color = 'var(--green)';
+  } else {
+    msg.textContent = '儲存失敗，請重試。';
+    msg.style.color = 'var(--red)';
+  }
+  setTimeout(() => { msg.textContent = ''; }, 3000);
 }
 
 // ── 薪資設定 ─────────────────────────────────────────────────

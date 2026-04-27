@@ -3902,8 +3902,28 @@ def api_leave_summary(staff_id, month):
 #   最低工資 2026年 NT$28,590（月薪）
 # ═══════════════════════════════════════════════════════════════════
 
+def _get_salary_calc_settings():
+    """讀取薪資計算設定（帶預設值）"""
+    try:
+        with get_db() as conn:
+            rows = conn.execute(
+                "SELECT setting_key, setting_value FROM salary_calc_settings"
+            ).fetchall()
+            cfg = {r['setting_key']: r['setting_value'] for r in rows}
+    except Exception:
+        cfg = {}
+    return {
+        'auto_leave_deduction':  cfg.get('auto_leave_deduction',  'true') == 'true',
+        'auto_absent_deduction': cfg.get('auto_absent_deduction', 'true') == 'true',
+        'auto_income_tax':       cfg.get('auto_income_tax',       'true') == 'true',
+    }
+
 def init_salary_db():
     migrations = [
+        """CREATE TABLE IF NOT EXISTS salary_calc_settings (
+            setting_key   TEXT PRIMARY KEY,
+            setting_value TEXT NOT NULL DEFAULT 'true'
+        )""",
         """CREATE TABLE IF NOT EXISTS salary_items (
             id          SERIAL PRIMARY KEY,
             name        TEXT NOT NULL,
@@ -4136,6 +4156,8 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
     total_work_days = work_days
     scheduled_dates = set()
 
+    _sal_cfg = _get_salary_calc_settings()
+
     if total_work_days is None:
         # 1. 優先從排班取工作日
         shift_date_rows = conn.execute("""
@@ -4348,34 +4370,35 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         })
         allowance_total += ot_pay
 
-    # ── 請假扣款 ────────────────────────────────────────────
-    if unpaid_days > 0 and daily_wage > 0:
-        leave_names = '、'.join(set(
-            r['leave_name'] for r in leave_rows if float(r['pay_rate']) == 0
-        ))
-        deduct = round(daily_wage * unpaid_days, 2)
-        items.append({
-            'id': 'unpaid', 'name': f'無薪假扣款（{leave_names}）', 'type': 'deduction',
-            'amount': deduct, 'formula': '',
-            'calc_note': f'{unpaid_days}天 × 日薪${round(daily_wage, 0)}',
-        })
-        deduction_total += deduct
+    # ── 請假扣款（可透過薪資計算設定關閉，改由薪資項目公式處理） ──
+    if _sal_cfg['auto_leave_deduction']:
+        if unpaid_days > 0 and daily_wage > 0:
+            leave_names = '、'.join(set(
+                r['leave_name'] for r in leave_rows if float(r['pay_rate']) == 0
+            ))
+            deduct = round(daily_wage * unpaid_days, 2)
+            items.append({
+                'id': 'unpaid', 'name': f'無薪假扣款（{leave_names}）', 'type': 'deduction',
+                'amount': deduct, 'formula': '',
+                'calc_note': f'{unpaid_days}天 × 日薪${round(daily_wage, 0)}',
+            })
+            deduction_total += deduct
 
-    if half_pay_days > 0 and daily_wage > 0:
-        leave_names = '、'.join(set(
-            r['leave_name'] for r in leave_rows if 0 < float(r['pay_rate']) < 1
-        ))
-        deduct = round(daily_wage * half_pay_days * 0.5, 2)
-        items.append({
-            'id': 'halfpay', 'name': f'半薪假扣款（{leave_names}）', 'type': 'deduction',
-            'amount': deduct, 'formula': '',
-            'calc_note': f'{half_pay_days}天 × 日薪${round(daily_wage, 0)} × 0.5',
-        })
-        deduction_total += deduct
+        if half_pay_days > 0 and daily_wage > 0:
+            leave_names = '、'.join(set(
+                r['leave_name'] for r in leave_rows if 0 < float(r['pay_rate']) < 1
+            ))
+            deduct = round(daily_wage * half_pay_days * 0.5, 2)
+            items.append({
+                'id': 'halfpay', 'name': f'半薪假扣款（{leave_names}）', 'type': 'deduction',
+                'amount': deduct, 'formula': '',
+                'calc_note': f'{half_pay_days}天 × 日薪${round(daily_wage, 0)} × 0.5',
+            })
+            deduction_total += deduct
 
-    # ── 月薪制：缺勤扣款（打卡記錄核查） ─────────────────────
+    # ── 月薪制：缺勤扣款（可透過薪資計算設定關閉） ───────────────
     absent_days = 0
-    if salary_type == 'monthly' and scheduled_dates and daily_wage > 0:
+    if _sal_cfg['auto_absent_deduction'] and salary_type == 'monthly' and scheduled_dates and daily_wage > 0:
         punch_rows = conn.execute("""
             SELECT DISTINCT (punched_at AT TIME ZONE 'Asia/Taipei')::date as work_date
             FROM punch_records WHERE staff_id=%s
@@ -4418,15 +4441,14 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
             })
             deduction_total += deduct
 
-    # ── 薪資所得扣繳稅款（台灣5%，免扣繳起徵點 NT$88,501） ──────
-    # 超過免扣繳起徵點者，按全額 5% 計算；每年度起徵點請依財政部公告調整
+    # ── 薪資所得扣繳稅款（可透過薪資計算設定關閉） ───────────────
     _TAX_THRESHOLD = 88501
     _existing_tax = sum(
         float(it['amount']) for it in items
         if isinstance(it.get('id'), str) and it['id'] == 'income_tax'
     )
     income_tax_withheld = 0.0
-    if _existing_tax == 0 and allowance_total > _TAX_THRESHOLD:
+    if _sal_cfg['auto_income_tax'] and _existing_tax == 0 and allowance_total > _TAX_THRESHOLD:
         income_tax_withheld = round(allowance_total * 0.05, 0)
         items.append({
             'id': 'income_tax', 'name': '薪資所得扣繳稅款', 'type': 'deduction',
@@ -4492,6 +4514,29 @@ def api_my_payslip():
     d['salary_type']   = row['salary_type']   or 'monthly'
     d['hourly_rate']   = float(row['hourly_rate'] or 0)
     return jsonify(d)
+
+# ── Salary Calc Settings ──────────────────────────────────────────
+
+@app.route('/api/salary/calc-settings', methods=['GET'])
+@require_module('salary')
+def api_salary_calc_settings_get():
+    return jsonify(_get_salary_calc_settings())
+
+@app.route('/api/salary/calc-settings', methods=['POST'])
+@require_module('salary')
+def api_salary_calc_settings_post():
+    b = request.get_json(force=True) or {}
+    allowed = {'auto_leave_deduction', 'auto_absent_deduction', 'auto_income_tax'}
+    with get_db() as conn:
+        for key in allowed:
+            if key in b:
+                val = 'true' if b[key] else 'false'
+                conn.execute(
+                    "INSERT INTO salary_calc_settings(setting_key,setting_value) VALUES(%s,%s)"
+                    " ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value",
+                    (key, val)
+                )
+    return jsonify({'ok': True, 'settings': _get_salary_calc_settings()})
 
 # ── Salary Items CRUD ─────────────────────────────────────────────
 
