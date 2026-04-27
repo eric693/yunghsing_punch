@@ -1067,7 +1067,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         </div>
         <button class="btn btn-primary" style="margin-top:12px" onclick="saveWhSettings()">儲存公司資訊</button>
         <div id="wh-msg" style="font-size:12px;color:var(--green);margin-top:8px;min-height:14px"></div>
-        <div style="font-size:12px;color:var(--muted);margin-top:10px">※ 員工身分證字號與地址請至薪資設定→各員工薪資設定中填入。扣繳稅額請在各月薪資紀錄中填入「扣繳稅額」欄位。</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:10px">※ 員工身分證字號與地址請至薪資設定→各員工薪資設定中填入。扣繳稅額系統自動計算（月薪資超過 NT$88,501 者扣 5%），並顯示在各月薪資明細中，年度憑單自動加總。如需手動調整，可在薪資明細中修改「薪資所得扣繳稅款」扣除項目的金額。</div>
       </div>
     </div>
 
@@ -5728,6 +5728,7 @@ async function openSalDetail(id) {
       <div style="text-align:center"><div style="font-size:11px;color:var(--muted)">扣除總額</div><div style="font-family:'DM Mono',monospace;font-size:18px;font-weight:700;color:var(--red)">$${fmtNum(data.deduction_total)}</div></div>
       <div style="text-align:center"><div style="font-size:11px;color:var(--muted)">實支付額</div><div style="font-family:'DM Mono',monospace;font-size:20px;font-weight:700;color:var(--navy)">$${fmtNum(data.net_pay)}</div></div>
     </div>
+    ${(data.income_tax_withheld||0)>0?`<div style="margin-top:8px;font-size:12px;color:var(--muted);text-align:right">扣繳稅款（年度憑單用）：<strong style="color:#e07b2a">$${fmtNum(data.income_tax_withheld||0)}</strong>　<span style="font-size:11px">已含於扣除項目中</span></div>`:''}
   </div>
   <div style="padding:16px 24px">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">

@@ -3988,7 +3988,8 @@ def salary_record_row(row):
     if not row: return None
     d = dict(row)
     for f in ['base_salary','insured_salary','work_days','actual_days','leave_days',
-              'unpaid_days','ot_pay','allowance_total','deduction_total','net_pay']:
+              'unpaid_days','ot_pay','allowance_total','deduction_total','net_pay',
+              'income_tax_withheld']:
         if d.get(f) is not None: d[f] = float(d[f])
     if isinstance(d.get('items'), str):
         try: d['items'] = _json.loads(d['items'])
@@ -4406,29 +4407,49 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
             })
             deduction_total += deduct
 
+    # ── 薪資所得扣繳稅款（台灣5%，免扣繳起徵點 NT$88,501） ──────
+    # 超過免扣繳起徵點者，按全額 5% 計算；每年度起徵點請依財政部公告調整
+    _TAX_THRESHOLD = 88501
+    _existing_tax = sum(
+        float(it['amount']) for it in items
+        if isinstance(it.get('id'), str) and it['id'] == 'income_tax'
+    )
+    income_tax_withheld = 0.0
+    if _existing_tax == 0 and allowance_total > _TAX_THRESHOLD:
+        income_tax_withheld = round(allowance_total * 0.05, 0)
+        items.append({
+            'id': 'income_tax', 'name': '薪資所得扣繳稅款', 'type': 'deduction',
+            'amount': income_tax_withheld, 'formula': '',
+            'calc_note': f'總支給 ${round(allowance_total,0):,.0f} × 5%（超過起徵點 ${_TAX_THRESHOLD:,}）',
+        })
+        deduction_total += income_tax_withheld
+    else:
+        income_tax_withheld = _existing_tax
+
     net_pay = round(allowance_total - deduction_total, 2)
 
     return {
-        'staff_id':           staff['id'],
-        'month':              month,
-        'salary_type':        salary_type,
-        'base_salary':        base_salary if salary_type == 'monthly' else 0,
-        'hourly_rate':        hourly_rate if salary_type == 'hourly' else 0,
-        'hourly_base_pay':    hourly_base_pay if salary_type == 'hourly' else 0,
-        'actual_work_hours':  actual_work_hours if salary_type == 'hourly' else 0,
-        'insured_salary':     insured_salary,
-        'work_days':          total_work_days,
-        'actual_days':        max(0, actual_days - absent_days),
-        'leave_days':         leave_days,
-        'unpaid_days':        unpaid_days,
-        'absent_days':        absent_days,
-        'ot_pay':             ot_pay,
-        'allowance_total':    round(allowance_total, 2),
-        'deduction_total':    round(deduction_total, 2),
-        'net_pay':            net_pay,
-        'items':              items,
-        'punch_details':      punch_details,   # 時薪制：每日打卡明細
-        'status':             'draft',
+        'staff_id':              staff['id'],
+        'month':                 month,
+        'salary_type':           salary_type,
+        'base_salary':           base_salary if salary_type == 'monthly' else 0,
+        'hourly_rate':           hourly_rate if salary_type == 'hourly' else 0,
+        'hourly_base_pay':       hourly_base_pay if salary_type == 'hourly' else 0,
+        'actual_work_hours':     actual_work_hours if salary_type == 'hourly' else 0,
+        'insured_salary':        insured_salary,
+        'work_days':             total_work_days,
+        'actual_days':           max(0, actual_days - absent_days),
+        'leave_days':            leave_days,
+        'unpaid_days':           unpaid_days,
+        'absent_days':           absent_days,
+        'ot_pay':                ot_pay,
+        'allowance_total':       round(allowance_total, 2),
+        'deduction_total':       round(deduction_total, 2),
+        'net_pay':               net_pay,
+        'income_tax_withheld':   income_tax_withheld,
+        'items':                 items,
+        'punch_details':         punch_details,
+        'status':                'draft',
     }
 
 # ── Employee: view own payslip ────────────────────────────────────
@@ -4565,22 +4586,22 @@ def api_salary_generate():
                 INSERT INTO salary_records
                   (staff_id, month, base_salary, insured_salary, work_days, actual_days,
                    leave_days, unpaid_days, ot_pay, allowance_total, deduction_total,
-                   net_pay, items, status, updated_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,'draft',NOW())
+                   net_pay, income_tax_withheld, items, status, updated_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,'draft',NOW())
                 ON CONFLICT (staff_id, month) DO UPDATE
                   SET base_salary=%s, insured_salary=%s, work_days=%s, actual_days=%s,
                       leave_days=%s, unpaid_days=%s, ot_pay=%s, allowance_total=%s,
-                      deduction_total=%s, net_pay=%s, items=%s::jsonb,
+                      deduction_total=%s, net_pay=%s, income_tax_withheld=%s, items=%s::jsonb,
                       status=CASE WHEN salary_records.status='confirmed' THEN 'confirmed' ELSE 'draft' END,
                       updated_at=NOW()
             """, (
                 data['staff_id'], month, data['base_salary'], data['insured_salary'],
                 data['work_days'], data['actual_days'], data['leave_days'], data['unpaid_days'],
                 data['ot_pay'], data['allowance_total'], data['deduction_total'],
-                data['net_pay'], items_json,
+                data['net_pay'], data['income_tax_withheld'], items_json,
                 data['base_salary'], data['insured_salary'], data['work_days'], data['actual_days'],
                 data['leave_days'], data['unpaid_days'], data['ot_pay'], data['allowance_total'],
-                data['deduction_total'], data['net_pay'], items_json,
+                data['deduction_total'], data['net_pay'], data['income_tax_withheld'], items_json,
             ))
             generated += 1
     return jsonify({'ok': True, 'generated': generated, 'month': month})
@@ -4609,15 +4630,23 @@ def api_salary_record_get(rid):
 @require_module('salary')
 def api_salary_record_update(rid):
     b = request.get_json(force=True)
-    items_json = _json.dumps(b.get('items', []), ensure_ascii=False)
+    items = b.get('items', [])
+    items_json = _json.dumps(items, ensure_ascii=False)
+    # 從 items 重新計算扣繳稅款（id='income_tax' 或名稱含「扣繳」）
+    tax_withheld = sum(
+        float(it.get('amount', 0)) for it in items
+        if it.get('type') == 'deduction' and (
+            it.get('id') == 'income_tax' or '扣繳' in (it.get('name') or '')
+        )
+    )
     with get_db() as conn:
         row = conn.execute("""
             UPDATE salary_records SET
               allowance_total=%s, deduction_total=%s, net_pay=%s,
-              items=%s::jsonb, note=%s, updated_at=NOW()
+              income_tax_withheld=%s, items=%s::jsonb, note=%s, updated_at=NOW()
             WHERE id=%s RETURNING *
         """, (float(b.get('allowance_total',0)), float(b.get('deduction_total',0)),
-              float(b.get('net_pay',0)), items_json,
+              float(b.get('net_pay',0)), tax_withheld, items_json,
               b.get('note',''), rid)).fetchone()
     return jsonify(salary_record_row(row)) if row else ('', 404)
 
