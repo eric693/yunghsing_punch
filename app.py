@@ -4185,7 +4185,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         SELECT COALESCE(SUM(ot_pay), 0) as total
         FROM overtime_requests
         WHERE staff_id=%s AND status='approved'
-          AND to_char(request_date,'YYYY-MM')=%s
+          AND to_char(COALESCE(ot_date, request_date),'YYYY-MM')=%s
     """, (staff['id'], month)).fetchone()
     ot_pay = float(ot_rows['total']) if ot_rows else 0.0
 
