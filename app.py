@@ -4223,7 +4223,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         SELECT COALESCE(SUM(ot_pay), 0) as total
         FROM overtime_requests
         WHERE staff_id=%s AND status='approved'
-          AND to_char(COALESCE(ot_date, request_date),'YYYY-MM')=%s
+          AND to_char(request_date,'YYYY-MM')=%s
     """, (staff['id'], month)).fetchone()
     ot_pay = float(ot_rows['total']) if ot_rows else 0.0
 
@@ -4647,8 +4647,8 @@ def api_salary_generate():
             return jsonify({'error': '月份格式錯誤，請使用 YYYY-MM'}), 400
         lock_key = 4_200_000_000 + month_int
         locked = conn.execute(
-            "SELECT pg_try_advisory_xact_lock(%s)", (lock_key,)
-        ).fetchone()[0]
+            "SELECT pg_try_advisory_xact_lock(%s) AS locked", (lock_key,)
+        ).fetchone()['locked']
         if not locked:
             return jsonify({'error': f'{month} 薪資正在產生中，請稍後再試'}), 409
 
@@ -11010,8 +11010,8 @@ def mobile_overtime_list():
     staff_id = int(u['sub'])
     with get_db() as conn:
         rows = conn.execute(
-            """SELECT id, ot_date, ot_hours, reason, status, created_at
-               FROM overtime_requests WHERE staff_id=%s ORDER BY ot_date DESC LIMIT 30""",
+            """SELECT id, request_date AS ot_date, ot_hours, reason, status, created_at
+               FROM overtime_requests WHERE staff_id=%s ORDER BY request_date DESC LIMIT 30""",
             (staff_id,)
         ).fetchall()
     data = []
