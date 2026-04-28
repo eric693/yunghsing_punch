@@ -1014,11 +1014,12 @@ def api_punch_staff_create():
     password = b.get('password', '').strip()
     if not name:     return jsonify({'error': '姓名為必填'}), 400
     if not username: return jsonify({'error': '帳號為必填'}), 400
-    if not password or len(password) < 4:
-        return jsonify({'error': '密碼至少 4 個字元'}), 400
+    if not password:
+        return jsonify({'error': '請設定密碼'}), 400
     employee_code = b.get('employee_code', '') or None
     if employee_code: employee_code = employee_code.strip() or None
     department     = (b.get('department') or '').strip()
+    role           = b.get('role', '').strip()
     hire_date      = b.get('hire_date') or None
     birth_date     = b.get('birth_date') or None
     bank_code      = (b.get('bank_code') or '').strip()
@@ -1030,11 +1031,11 @@ def api_punch_staff_create():
         with get_db() as conn:
             row = conn.execute("""
                 INSERT INTO punch_staff
-                  (name, username, password_hash, password_plain, role, employee_code,
+                  (name, username, password_hash, password_plain, role, position_title, employee_code,
                    department, hire_date, birth_date,
                    bank_code, bank_name, bank_branch, bank_account, account_holder)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
-            """, (name, username, _hash_pw(password), password, b.get('role', '').strip(), employee_code,
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
+            """, (name, username, _hash_pw(password), password, role, role, employee_code,
                   department, hire_date, birth_date,
                   bank_code, bank_name, bank_branch, bank_account, account_holder)).fetchone()
         return jsonify(punch_staff_row(row)), 201
@@ -1070,25 +1071,23 @@ def api_punch_staff_update(sid):
         return jsonify({'error': '姓名和帳號為必填'}), 400
     with get_db() as conn:
         if password:
-            if len(password) < 4:
-                return jsonify({'error': '密碼至少 4 個字元'}), 400
             row = conn.execute("""
                 UPDATE punch_staff
-                SET name=%s,username=%s,password_hash=%s,password_plain=%s,role=%s,active=%s,employee_code=%s,
+                SET name=%s,username=%s,password_hash=%s,password_plain=%s,role=%s,position_title=%s,active=%s,employee_code=%s,
                     department=%s,hire_date=%s,birth_date=%s,
                     bank_code=%s,bank_name=%s,bank_branch=%s,bank_account=%s,account_holder=%s
                 WHERE id=%s RETURNING *
-            """, (name, username, _hash_pw(password), password, role, active, employee_code,
+            """, (name, username, _hash_pw(password), password, role, role, active, employee_code,
                   department, hire_date, birth_date,
                   bank_code, bank_name, bank_branch, bank_account, account_holder, sid)).fetchone()
         else:
             row = conn.execute("""
                 UPDATE punch_staff
-                SET name=%s,username=%s,role=%s,active=%s,employee_code=%s,
+                SET name=%s,username=%s,role=%s,position_title=%s,active=%s,employee_code=%s,
                     department=%s,hire_date=%s,birth_date=%s,
                     bank_code=%s,bank_name=%s,bank_branch=%s,bank_account=%s,account_holder=%s
                 WHERE id=%s RETURNING *
-            """, (name, username, role, active, employee_code,
+            """, (name, username, role, role, active, employee_code,
                   department, hire_date, birth_date,
                   bank_code, bank_name, bank_branch, bank_account, account_holder, sid)).fetchone()
     return jsonify(punch_staff_row(row)) if row else ('', 404)
@@ -5396,9 +5395,11 @@ def api_anomaly_report_excel():
         shift_rows = conn.execute("""
             SELECT sa.staff_id, sa.shift_date,
                    st.start_time::text as start_time,
-                   st.end_time::text   as end_time
+                   st.end_time::text   as end_time,
+                   ps.name as staff_name, ps.department
             FROM shift_assignments sa
             JOIN shift_types st ON st.id=sa.shift_type_id
+            JOIN punch_staff ps ON ps.id=sa.staff_id AND ps.active=TRUE
             WHERE TO_CHAR(sa.shift_date,'YYYY-MM')=%s
         """, (month,)).fetchall()
 
@@ -5477,6 +5478,30 @@ def api_anomaly_report_excel():
                 'anomaly_type': anomaly_type,
                 'detail':       detail,
             })
+
+    # 補抓完全未打卡（有排班但整天沒有任何打卡記錄）
+    punched_set = {(r['staff_id'], str(r['work_date'])) for r in punch_rows}
+    for sr in shift_rows:
+        ds  = str(sr['shift_date'])
+        sid = sr['staff_id']
+        if _dax.fromisoformat(ds) >= today:
+            continue
+        if (sid, ds) in punched_set:
+            continue
+        if (sid, ds) in leave_set:
+            continue
+        anomalies.append({
+            'staff_name':   sr['staff_name'],
+            'department':   sr['department'] or '',
+            'date':         ds,
+            'shift_start':  str(sr['start_time'])[:5],
+            'shift_end':    str(sr['end_time'])[:5],
+            'clock_in':     '—',
+            'clock_out':    '—',
+            'anomaly_type': '未打卡',
+            'detail':       f"排班 {str(sr['start_time'])[:5]}～{str(sr['end_time'])[:5]}，整日無打卡記錄",
+        })
+    anomalies.sort(key=lambda x: (x['date'], x['staff_name']))
 
     # Build Excel
     wb   = openpyxl.Workbook()
