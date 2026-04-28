@@ -327,6 +327,7 @@ def init_db():
         "CREATE INDEX IF NOT EXISTS idx_leave_requests_staff_status ON leave_requests(staff_id, status)",
         "CREATE INDEX IF NOT EXISTS idx_leave_requests_staff_date   ON leave_requests(staff_id, start_date)",
         "CREATE INDEX IF NOT EXISTS idx_overtime_requests_staff     ON overtime_requests(staff_id, status)",
+        "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS sort_order INT DEFAULT 0",
     ]
     for sql in migrations:
         try:
@@ -1002,8 +1003,23 @@ def api_punch_my_records():
 @login_required
 def api_punch_staff_list():
     with get_db() as conn:
-        rows = conn.execute("SELECT * FROM punch_staff ORDER BY name").fetchall()
+        rows = conn.execute("SELECT * FROM punch_staff ORDER BY sort_order, name").fetchall()
     return jsonify([punch_staff_row(r) for r in rows])
+
+@app.route('/api/punch/staff/reorder', methods=['POST'])
+@login_required
+def api_punch_staff_reorder():
+    """批次更新員工排列順序，接受 [{id, sort_order}, ...]"""
+    items = request.get_json(force=True) or []
+    if not isinstance(items, list):
+        return jsonify({'error': '格式錯誤'}), 400
+    with get_db() as conn:
+        for item in items:
+            conn.execute(
+                "UPDATE punch_staff SET sort_order=%s WHERE id=%s",
+                (int(item.get('sort_order', 0)), int(item['id']))
+            )
+    return jsonify({'ok': True})
 
 @app.route('/api/punch/staff', methods=['POST'])
 @login_required

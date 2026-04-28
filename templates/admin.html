@@ -100,6 +100,7 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 thead th { background: #f7f9fd; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; padding: 11px 16px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
 tbody tr { border-bottom: 1px solid #f0f2f8; transition: background 0.12s; }
 tbody tr:hover { background: #f7f9fd; }
+tr.drag-over { outline: 2px dashed var(--accent); background: #eff6ff; }
 tbody tr:last-child { border-bottom: none; }
 tbody td { padding: 12px 16px; color: var(--text); white-space: nowrap; font-family: 'DM Mono', monospace; font-size: 13px; }
 tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; }
@@ -507,8 +508,8 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
       <div class="card">
         <div class="table-wrap">
           <table>
-            <thead><tr><th>姓名</th><th>員工代碼</th><th>部門/職稱</th><th>帳號</th><th>匯款帳號</th><th>狀態</th><th>操作</th></tr></thead>
-            <tbody id="punch-staff-tbody"><tr><td colspan="7" class="empty-state"><div class="empty-state-text">載入中...</div></td></tr></tbody>
+            <thead><tr><th style="width:32px"></th><th>姓名</th><th>員工代碼</th><th>部門/職稱</th><th>帳號</th><th>匯款帳號</th><th>狀態</th><th>操作</th></tr></thead>
+            <tbody id="punch-staff-tbody"><tr><td colspan="8" class="empty-state"><div class="empty-state-text">載入中...</div></td></tr></tbody>
           </table>
         </div>
       </div>
@@ -4085,13 +4086,14 @@ async function loadPunchStaff() {
   punchStaffList = ok ? data : [];
   const tb = document.getElementById('punch-staff-tbody');
   document.getElementById('punch-staff-count').textContent = `共 ${punchStaffList.length} 位員工`;
-  if (!punchStaffList.length) { tb.innerHTML = '<tr><td colspan="7" class="empty-state"><div class="empty-state-text">尚無員工</div></td></tr>'; return; }
+  if (!punchStaffList.length) { tb.innerHTML = '<tr><td colspan="8" class="empty-state"><div class="empty-state-text">尚無員工</div></td></tr>'; return; }
   tb.innerHTML = punchStaffList.map(s => {
     const dept = [s.department, s.role].filter(Boolean).join(' / ') || '—';
     const bankInfo = s.bank_account
       ? `<span style="font-family:'DM Mono',monospace;font-size:11px">${escHtml(s.bank_name||'')} ${escHtml(s.bank_account)}</span>`
       : '<span style="color:var(--muted);font-size:12px">未設定</span>';
-    return `<tr>
+    return `<tr draggable="true" data-id="${s.id}" style="cursor:default">
+    <td style="cursor:grab;text-align:center;color:var(--muted);font-size:16px;user-select:none" class="drag-handle" title="拖曳排序">⠿</td>
     <td style="font-weight:600">${escHtml(s.name)}</td>
     <td style="font-family:'DM Mono',monospace;font-size:12px;color:var(--muted)">${escHtml(s.employee_code||'—')}</td>
     <td style="color:var(--muted);font-size:13px">${escHtml(dept)}</td>
@@ -4105,7 +4107,42 @@ async function loadPunchStaff() {
     </td>
   </tr>`;
   }).join('');
+  initStaffDragSort();
 }
+function initStaffDragSort() {
+  const tb = document.getElementById('punch-staff-tbody');
+  let dragSrc = null;
+  tb.querySelectorAll('tr[draggable]').forEach(row => {
+    row.addEventListener('dragstart', e => {
+      dragSrc = row;
+      e.dataTransfer.effectAllowed = 'move';
+      row.style.opacity = '0.4';
+    });
+    row.addEventListener('dragend', () => {
+      row.style.opacity = '';
+      tb.querySelectorAll('tr').forEach(r => r.classList.remove('drag-over'));
+    });
+    row.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      tb.querySelectorAll('tr').forEach(r => r.classList.remove('drag-over'));
+      if (row !== dragSrc) row.classList.add('drag-over');
+    });
+    row.addEventListener('drop', async e => {
+      e.preventDefault();
+      if (!dragSrc || dragSrc === row) return;
+      row.classList.remove('drag-over');
+      const rows = [...tb.querySelectorAll('tr[data-id]')];
+      const srcIdx = rows.indexOf(dragSrc);
+      const dstIdx = rows.indexOf(row);
+      if (srcIdx < dstIdx) row.after(dragSrc); else row.before(dragSrc);
+      const newOrder = [...tb.querySelectorAll('tr[data-id]')].map((r, i) => ({ id: parseInt(r.dataset.id), sort_order: i }));
+      punchStaffList = newOrder.map(o => punchStaffList.find(s => s.id === o.id)).filter(Boolean);
+      await api('/api/punch/staff/reorder', apiJSON(newOrder));
+    });
+  });
+}
+
 function openPunchStaffModal(id=null) {
   punchEditStaffId = id;
   document.getElementById('psm-title').textContent = id ? '編輯員工' : '新增員工';
