@@ -8269,7 +8269,7 @@ def api_salary_preview():
                     SELECT COUNT(*) AS n, COALESCE(SUM(ot_hours),0) AS hrs
                     FROM overtime_requests WHERE staff_id=%s
                       AND status='approved'
-                      AND to_char(COALESCE(ot_date, request_date),'YYYY-MM')=%s
+                      AND to_char(request_date,'YYYY-MM')=%s
                 """, (staff['id'], month)).fetchone()
                 result.append({
                     'staff_id':        data['staff_id'],
@@ -10994,7 +10994,7 @@ def mobile_overtime():
     with get_db() as conn:
         conn.execute(
             """INSERT INTO overtime_requests
-               (staff_id, ot_date, ot_hours, reason, status)
+               (staff_id, request_date, ot_hours, reason, status)
                VALUES (%s, %s, %s, %s, 'pending')""",
             (staff_id, ot_date, hours, reason)
         )
@@ -11141,7 +11141,7 @@ def mobile_admin_overtime():
     status = request.args.get('status', 'pending')
     with get_db() as conn:
         rows = conn.execute(
-            """SELECT ot.id, ps.name AS staff_name, ot.ot_date, ot.ot_hours,
+            """SELECT ot.id, ps.name AS staff_name, ot.request_date AS ot_date, ot.ot_hours,
                       ot.reason, ot.status, ot.created_at
                FROM overtime_requests ot
                JOIN punch_staff ps ON ot.staff_id = ps.id
