@@ -9550,7 +9550,7 @@ async function previewSalary() {
 
   const r = await api('/api/salary/records/preview', apiJSON({ month }));
   loading.style.display = 'none';
-  if (!r.ok) { content.style.display = ''; tbody.innerHTML = `<tr><td colspan="11" style="color:var(--red);padding:24px;text-align:center">計算失敗：${escHtml(r.error||'')}</td></tr>`; return; }
+  if (!r.ok) { content.style.display = ''; tbody.innerHTML = `<tr><td colspan="11" style="color:var(--red);padding:24px;text-align:center">計算失敗：${escHtml(r.data?.error||'請求失敗')}</td></tr>`; return; }
 
   const recs = r.data.records || [];
   if (!recs.length) {

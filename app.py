@@ -8212,42 +8212,46 @@ def api_salary_preview():
     if not month:
         return jsonify({'error': '請指定月份'}), 400
     result = []
-    with get_db() as conn:
-        staff_list = conn.execute(
-            "SELECT * FROM punch_staff WHERE active=TRUE ORDER BY name"
-        ).fetchall()
-        for staff in staff_list:
-            data = _auto_generate_salary(conn, dict(staff), month)
-            # punch attendance days this month
-            punch_days = conn.execute("""
-                SELECT COUNT(DISTINCT punched_at::date) AS n
-                FROM punch_records WHERE staff_id=%s
-                  AND to_char(punched_at,'YYYY-MM')=%s
-            """, (staff['id'], month)).fetchone()['n']
-            approved_ot = conn.execute("""
-                SELECT COUNT(*) AS n, COALESCE(SUM(ot_hours),0) AS hrs
-                FROM overtime_requests WHERE staff_id=%s
-                  AND status='approved'
-                  AND to_char(COALESCE(ot_date, request_date),'YYYY-MM')=%s
-            """, (staff['id'], month)).fetchone()
-            result.append({
-                'staff_id':       data['staff_id'],
-                'staff_name':     staff['name'],
-                'department':     staff['department'],
-                'salary_type':    staff['salary_type'],
-                'punch_days':     punch_days,
-                'work_days':      float(data['work_days']),
-                'actual_days':    float(data['actual_days']),
-                'leave_days':     float(data['leave_days']),
-                'unpaid_days':    float(data['unpaid_days']),
-                'ot_count':       int(approved_ot['n']),
-                'ot_hours':       float(approved_ot['hrs']),
-                'ot_pay':         float(data['ot_pay']),
-                'base_salary':    float(data['base_salary']),
-                'allowance_total': float(data['allowance_total']),
-                'deduction_total': float(data['deduction_total']),
-                'net_pay':        float(data['net_pay']),
-            })
+    try:
+        with get_db() as conn:
+            staff_list = conn.execute(
+                "SELECT * FROM punch_staff WHERE active=TRUE ORDER BY name"
+            ).fetchall()
+            for staff in staff_list:
+                data = _auto_generate_salary(conn, dict(staff), month)
+                punch_days = conn.execute("""
+                    SELECT COUNT(DISTINCT (punched_at AT TIME ZONE 'Asia/Taipei')::date) AS n
+                    FROM punch_records WHERE staff_id=%s
+                      AND to_char(punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s
+                """, (staff['id'], month)).fetchone()['n']
+                approved_ot = conn.execute("""
+                    SELECT COUNT(*) AS n, COALESCE(SUM(ot_hours),0) AS hrs
+                    FROM overtime_requests WHERE staff_id=%s
+                      AND status='approved'
+                      AND to_char(COALESCE(ot_date, request_date),'YYYY-MM')=%s
+                """, (staff['id'], month)).fetchone()
+                result.append({
+                    'staff_id':        data['staff_id'],
+                    'staff_name':      staff['name'],
+                    'department':      staff['department'],
+                    'salary_type':     staff['salary_type'],
+                    'punch_days':      punch_days,
+                    'work_days':       float(data['work_days']),
+                    'actual_days':     float(data['actual_days']),
+                    'leave_days':      float(data['leave_days']),
+                    'unpaid_days':     float(data['unpaid_days']),
+                    'ot_count':        int(approved_ot['n']),
+                    'ot_hours':        float(approved_ot['hrs']),
+                    'ot_pay':          float(data['ot_pay']),
+                    'base_salary':     float(data['base_salary']),
+                    'allowance_total': float(data['allowance_total']),
+                    'deduction_total': float(data['deduction_total']),
+                    'net_pay':         float(data['net_pay']),
+                })
+    except Exception as e:
+        import traceback
+        print(f"[salary_preview] ERROR: {e}\n{traceback.format_exc()}")
+        return jsonify({'ok': False, 'error': f'計算失敗：{e}'}), 500
     return jsonify({'ok': True, 'month': month, 'records': result})
 
 
