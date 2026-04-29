@@ -7016,67 +7016,82 @@ def _scrape_labor_law_updates():
 
 
 def _run_labor_law_check():
-    """Scrape and store new 勞基法 amendments; auto-announce if new ones found."""
+    """
+    Scrape and store 勞基法 amendments.
+    - First run (empty table): import all history as announced=TRUE (no false alarms).
+    - Subsequent runs: new records inserted as announced=FALSE; auto-announcement created.
+    """
     updates = _scrape_labor_law_updates()
     if not updates:
         print("[labor_law_check] no data returned from scraper")
         return
 
-    new_count = 0
+    # Detect first-run: if the table is empty, this is an initial historical import
+    try:
+        with get_db() as conn:
+            existing_count = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM labor_law_updates WHERE law_name='勞動基準法'"
+            ).fetchone()['cnt']
+    except Exception as e:
+        print(f"[labor_law_check] count error: {e}")
+        existing_count = 0
+
+    is_initial_import = (existing_count == 0)
+    if is_initial_import:
+        print("[labor_law_check] initial import — marking all historical records as announced")
+
+    new_ids = []
     for u in updates:
         try:
             with get_db() as conn:
-                existing = conn.execute(
-                    "SELECT id FROM labor_law_updates WHERE law_name='勞動基準法' AND amend_date=%s",
-                    (u['amend_date'],)
-                ).fetchone()
-                if existing:
-                    continue
-                conn.execute("""
+                # announced=TRUE for initial import (historical data, no notification needed)
+                # announced=FALSE for new records found on subsequent runs
+                row = conn.execute("""
                     INSERT INTO labor_law_updates
                       (law_name, amend_date, version_note, summary, source_url, announced)
-                    VALUES ('勞動基準法', %s, %s, %s, %s, FALSE)
+                    VALUES ('勞動基準法', %s, %s, %s, %s, %s)
                     ON CONFLICT (law_name, amend_date) DO NOTHING
-                """, (u['amend_date'], u['version_note'], u['summary'], u['source_url']))
-                new_count += 1
+                    RETURNING id
+                """, (u['amend_date'], u['version_note'], u['summary'],
+                      u['source_url'], is_initial_import)).fetchone()
+                if row and not is_initial_import:
+                    new_ids.append(row['id'])
         except Exception as e:
             print(f"[labor_law_check] db error: {e}")
 
-    if new_count > 0:
-        print(f"[labor_law_check] {new_count} new amendment(s) found, creating announcement")
-        try:
-            with get_db() as conn:
-                latest = conn.execute("""
-                    SELECT * FROM labor_law_updates
-                    WHERE announced=FALSE
-                    ORDER BY amend_date DESC
-                    LIMIT 5
-                """).fetchall()
-                if latest:
-                    dates = '、'.join(dict(r)['amend_date'] for r in latest)
-                    title = f"勞動基準法修正公告（{dates}）"
-                    lines = [f"系統偵測到勞動基準法新修正版本，請人資部門注意相關條文變動：\n"]
-                    for r in latest:
-                        rd = dict(r)
-                        lines.append(f"・修正日期：{rd['amend_date']}")
-                        if rd.get('version_note'):
-                            lines.append(f"  {rd['version_note']}")
-                        lines.append(f"  來源：{rd['source_url']}")
-                    lines.append("\n請至全國法規資料庫確認詳細條文內容。")
-                    content = '\n'.join(lines)
-                    conn.execute("""
-                        INSERT INTO announcements
-                          (title, content, category, priority, is_pinned, visible_to, author, active)
-                        VALUES (%s, %s, 'labor_law', 'high', TRUE, 'admin', '勞基法監控系統', TRUE)
-                    """, (title, content))
-                    conn.execute("""
-                        UPDATE labor_law_updates SET announced=TRUE
-                        WHERE announced=FALSE
-                    """)
-        except Exception as e:
-            print(f"[labor_law_check] announce error: {e}")
-    else:
-        print("[labor_law_check] no new amendments")
+    if not new_ids:
+        print(f"[labor_law_check] no new amendments (initial={is_initial_import})")
+        return
+
+    print(f"[labor_law_check] {len(new_ids)} new amendment(s) — creating announcement")
+    try:
+        with get_db() as conn:
+            new_rows = conn.execute("""
+                SELECT * FROM labor_law_updates
+                WHERE id = ANY(%s)
+                ORDER BY amend_date DESC
+            """, (new_ids,)).fetchall()
+            if not new_rows:
+                return
+            dates = '、'.join(str(dict(r)['amend_date']) for r in new_rows)
+            title = f"勞動基準法修正公告（{dates}）"
+            lines = ["系統偵測到勞動基準法新修正版本，請人資部門注意相關條文變動：\n"]
+            for r in new_rows:
+                rd = dict(r)
+                lines.append(f"・修正日期：{rd['amend_date']}")
+                if rd.get('version_note'):
+                    lines.append(f"  {rd['version_note']}")
+                lines.append(f"  來源：{rd['source_url']}")
+            lines.append("\n請至全國法規資料庫確認詳細條文內容。")
+            content = '\n'.join(lines)
+            conn.execute("""
+                INSERT INTO announcements
+                  (title, content, category, priority, is_pinned, visible_to, author, active)
+                VALUES (%s, %s, 'labor_law', 'high', TRUE, 'admin', '勞基法監控系統', TRUE)
+            """, (title, content))
+            # announced stays FALSE until admin opens the labor-law page (drives the badge)
+    except Exception as e:
+        print(f"[labor_law_check] announce error: {e}")
 
 
 def _labor_law_check_loop():
@@ -7105,6 +7120,11 @@ def api_labor_law_list():
             ORDER BY amend_date DESC
             LIMIT 100
         """).fetchall()
+        # Admin opened the page — mark all unread as seen (clears the badge)
+        conn.execute("""
+            UPDATE labor_law_updates SET announced=TRUE
+            WHERE announced=FALSE
+        """)
     result = []
     for r in rows:
         d = dict(r)
@@ -7129,6 +7149,7 @@ def api_labor_law_trigger_check():
 @app.route('/api/labor-law/badge', methods=['GET'])
 @login_required
 def api_labor_law_badge():
+    """Badge counts new amendments not yet seen by admin (announced=FALSE)."""
     with get_db() as conn:
         row = conn.execute(
             "SELECT COUNT(*) AS cnt FROM labor_law_updates WHERE announced=FALSE"
