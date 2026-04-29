@@ -215,6 +215,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     <a href="#" class="nav-item"        id="nav-perf" onclick="showPage('perf',event)">績效考核</a>
     <a href="#" class="nav-item"        id="nav-stores"   onclick="showPage('stores',event)">門市管理</a>
     <a href="#" class="nav-item"        id="nav-training" onclick="showPage('training',event)">教育訓練</a>
+    <a href="#" class="nav-item"        id="nav-labor-law" onclick="showPage('labor-law',event)">勞基法通知<span class="nav-badge" id="badge-labor-law" style="display:none"></span></a>
     <a href="#" class="nav-item"        id="nav-adminmgr" onclick="showPage('adminmgr',event)" style="display:none">帳號管理</a>
   </nav>
   <div class="sidebar-bottom">
@@ -1188,6 +1189,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
           <option value="event">活動通知</option>
           <option value="urgent">緊急公告</option>
           <option value="policy">制度政策</option>
+          <option value="labor_law">勞基法修正</option>
         </select>
         <select class="filter-input" id="ann-filter-status" onchange="loadAnnList()" style="min-width:110px">
           <option value="">全部狀態</option>
@@ -1759,6 +1761,75 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
 
   </div><!-- end page-training -->
 
+  <!-- ── 勞基法通知 ── -->
+  <div class="page" id="page-labor-law" style="display:none">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px">
+      <div>
+        <div style="font-size:15px;font-weight:700;color:var(--navy)">勞動基準法異動監控</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px">系統每週自動抓取全國法規資料庫，偵測勞基法修正。有新修正時自動建立公告通知。</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <a href="https://law.moj.gov.tw/LawClass/LawHistory.aspx?pcode=N0030001" target="_blank"
+           style="font-size:12px;color:var(--accent);text-decoration:none;border:1px solid var(--accent);padding:4px 10px;border-radius:4px">
+          開啟全國法規資料庫 ↗
+        </a>
+        <button class="btn btn-outline btn-sm" onclick="triggerLaborLawCheck()">立即檢查更新</button>
+        <button class="btn btn-primary btn-sm" onclick="loadLaborLawUpdates()">重新整理</button>
+      </div>
+    </div>
+
+    <!-- 統計卡 -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:20px" id="labor-law-stats">
+      <div class="card" style="padding:16px 18px">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">修正記錄總數</div>
+        <div style="font-size:26px;font-weight:700;color:var(--navy);margin-top:6px" id="ll-total">—</div>
+      </div>
+      <div class="card" style="padding:16px 18px">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">最近修正日期</div>
+        <div style="font-size:18px;font-weight:700;color:var(--accent);margin-top:6px" id="ll-latest">—</div>
+      </div>
+      <div class="card" style="padding:16px 18px">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">最後檢查時間</div>
+        <div style="font-size:14px;font-weight:600;color:var(--navy);margin-top:6px" id="ll-last-check">—</div>
+      </div>
+    </div>
+
+    <!-- 修正歷史清單 -->
+    <div class="card">
+      <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
+        <span class="card-title">修正歷史記錄</span>
+        <span style="font-size:11px;color:var(--muted)">來源：全國法規資料庫（law.moj.gov.tw）</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:110px">修正日期</th>
+              <th>說明 / 異動摘要</th>
+              <th style="width:80px">公告狀態</th>
+              <th style="width:90px">收錄時間</th>
+              <th style="width:70px">來源</th>
+            </tr>
+          </thead>
+          <tbody id="labor-law-tbody">
+            <tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted)">載入中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 說明卡 -->
+    <div class="card" style="margin-top:14px;padding:16px 20px;background:#f8faff;border-left:3px solid var(--accent)">
+      <div style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:8px">關於勞基法監控</div>
+      <div style="font-size:12px;color:var(--muted);line-height:2">
+        <div>• 系統每 <strong>7 天</strong>自動從全國法規資料庫抓取勞動基準法（法規代號 N0030001）修正紀錄</div>
+        <div>• 發現新修正時，自動在「<strong>公告管理</strong>」新增高優先度公告提醒人資人員</div>
+        <div>• 可點擊「立即檢查更新」手動觸發一次即時抓取</div>
+        <div>• 公告後請至全國法規資料庫確認完整條文，本系統僅提示修正日期，不取代法律諮詢</div>
+      </div>
+    </div>
+  </div><!-- end page-labor-law -->
+
   <!-- ── 費用審核 ── -->
   <div class="page" id="page-expense-review" style="display:none">
     <div class="filter-bar" style="margin-bottom:20px">
@@ -2314,6 +2385,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
             <option value="event">活動通知</option>
             <option value="urgent">緊急公告</option>
             <option value="policy">制度政策</option>
+            <option value="labor_law">勞基法修正</option>
           </select>
         </div>
         <div>
@@ -3778,10 +3850,10 @@ function showPage(page, e) {
   const navEl = document.getElementById('nav-' + page);
   if (navEl) navEl.classList.add('active');
   setTimeout(refreshBadges, 600);
-  ['dash','punch','sched','leave','salary','ann','holiday','finance','adminmgr','expense-review','perf','stores','training'].forEach(p =>
+  ['dash','punch','sched','leave','salary','ann','holiday','finance','adminmgr','expense-review','perf','stores','training','labor-law'].forEach(p =>
     document.getElementById('page-' + p).style.display = p === page ? '' : 'none'
   );
-  const titles = { dash:'儀表板', punch:'打卡管理', sched:'排班管理', leave:'請假管理', salary:'薪資管理', ann:'公告管理', holiday:'國定假日', finance:'財務管理', adminmgr:'帳號管理', 'expense-review':'費用審核', perf:'績效考核', stores:'門市管理', training:'教育訓練追蹤' };
+  const titles = { dash:'儀表板', punch:'打卡管理', sched:'排班管理', leave:'請假管理', salary:'薪資管理', ann:'公告管理', holiday:'國定假日', finance:'財務管理', adminmgr:'帳號管理', 'expense-review':'費用審核', perf:'績效考核', stores:'門市管理', training:'教育訓練追蹤', 'labor-law':'勞基法通知' };
   document.getElementById('page-title').textContent = titles[page] || page;
   if (page === 'dash')            initDash();
   if (page === 'punch')           initPunch();
@@ -3796,6 +3868,7 @@ function showPage(page, e) {
   if (page === 'perf')            initPerf();
   if (page === 'stores')          loadStores();
   if (page === 'training')        initTraining();
+  if (page === 'labor-law')       loadLaborLawUpdates();
 }
 
 // ── Toast ─────────────────────────────────────────────────────
@@ -6484,11 +6557,11 @@ let annList = [];
 
 const ANN_CAT_LABEL = {
   general:'一般公告', hr:'人事公告', event:'活動通知',
-  urgent:'緊急公告', policy:'制度政策'
+  urgent:'緊急公告', policy:'制度政策', labor_law:'勞基法修正'
 };
 const ANN_CAT_COLOR = {
   general:'#4a7bda', hr:'#2e9e6b', event:'#c8a96e',
-  urgent:'#d64242',  policy:'#8b5cf6'
+  urgent:'#d64242',  policy:'#8b5cf6', labor_law:'#0f766e'
 };
 const ANN_PRI_LABEL = { normal:'一般', important:'重要', urgent:'緊急' };
 const ANN_PRI_COLOR = { normal:'var(--muted)', important:'var(--orange)', urgent:'var(--red)' };
@@ -6633,27 +6706,30 @@ async function toggleAnnPin(id) {
 
 // ── Badges ────────────────────────────────────────────────────
 async function refreshBadges() {
-  const [punchRq, otRq, schedRq1, schedRq2, leaveRq, expenseRq] = await Promise.all([
+  const [punchRq, otRq, schedRq1, schedRq2, leaveRq, expenseRq, laborLawBadge] = await Promise.all([
     api('/api/punch/requests?status=pending',                    {}, true),
     api('/api/overtime/requests?status=pending',                 {}, true),
     api('/api/schedule/admin/requests?status=pending',           {}, true),
     api('/api/schedule/admin/requests?status=modified_pending',  {}, true),
     api('/api/leave/requests?status=pending',                    {}, true),
     api('/api/expense/claims?status=pending',                    {}, true),
+    api('/api/labor-law/badge',                                  {}, true),
   ]);
 
-  const punchRqCnt = punchRq.ok && Array.isArray(punchRq.data) ? punchRq.data.length : 0;
-  const otCnt      = otRq.ok   && Array.isArray(otRq.data)     ? otRq.data.length    : 0;
-  const schedCnt   = (schedRq1.ok && Array.isArray(schedRq1.data) ? schedRq1.data.length : 0) +
-                     (schedRq2.ok && Array.isArray(schedRq2.data) ? schedRq2.data.length : 0);
-  const leaveCnt   = leaveRq.ok && Array.isArray(leaveRq.data)  ? leaveRq.data.length  : 0;
-  const expenseCnt = expenseRq.ok && Array.isArray(expenseRq.data) ? expenseRq.data.length : 0;
+  const punchRqCnt  = punchRq.ok && Array.isArray(punchRq.data) ? punchRq.data.length : 0;
+  const otCnt       = otRq.ok   && Array.isArray(otRq.data)     ? otRq.data.length    : 0;
+  const schedCnt    = (schedRq1.ok && Array.isArray(schedRq1.data) ? schedRq1.data.length : 0) +
+                      (schedRq2.ok && Array.isArray(schedRq2.data) ? schedRq2.data.length : 0);
+  const leaveCnt    = leaveRq.ok && Array.isArray(leaveRq.data)  ? leaveRq.data.length  : 0;
+  const expenseCnt  = expenseRq.ok && Array.isArray(expenseRq.data) ? expenseRq.data.length : 0;
+  const laborLawCnt = laborLawBadge.ok && laborLawBadge.data ? (laborLawBadge.data.unread || 0) : 0;
 
   // ── 左側 nav badge（顯示各模組總待審數）──
   setBadge('badge-punch', punchRqCnt + otCnt);   // 打卡管理 = 補打卡 + 加班
   setBadge('badge-sched', schedCnt);              // 排班管理 = 排休申請
   setBadge('badge-leave', leaveCnt);              // 請假管理 = 請假申請
   setBadge('badge-expense-review', expenseCnt);   // 費用審核 = 待審費用
+  setBadge('badge-labor-law', laborLawCnt);        // 勞基法通知 = 新修正
 
   // ── Tab 內的小 badge（進入頁面後顯示哪個 tab 有待審）──
   setTabDot('tabdot-punchrq', punchRqCnt);
@@ -9715,6 +9791,71 @@ async function deleteAdminBioCred(credId){
 
 function escStr(s){
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ══════════════════════════════════════════════════════════════
+// 勞基法通知模組
+// ══════════════════════════════════════════════════════════════
+async function loadLaborLawUpdates() {
+  const tbody = document.getElementById('labor-law-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted)">載入中...</td></tr>';
+
+  const res = await api('/api/labor-law/updates', {}, true);
+  if (!res.ok || !Array.isArray(res.data)) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--red)">載入失敗，請重試</td></tr>';
+    return;
+  }
+  const rows = res.data;
+
+  // 更新統計卡
+  const totalEl = document.getElementById('ll-total');
+  const latestEl = document.getElementById('ll-latest');
+  const lastCheckEl = document.getElementById('ll-last-check');
+  if (totalEl) totalEl.textContent = rows.length;
+  if (latestEl) latestEl.textContent = rows.length > 0 ? rows[0].amend_date : '尚無資料';
+  if (lastCheckEl && rows.length > 0) {
+    const fetchedAt = rows[0].fetched_at ? new Date(rows[0].fetched_at) : null;
+    lastCheckEl.textContent = fetchedAt ? fetchedAt.toLocaleString('zh-TW') : '—';
+  } else if (lastCheckEl) {
+    lastCheckEl.textContent = '尚未執行';
+  }
+
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--muted)">尚無資料，請點擊「立即檢查更新」</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = rows.map(r => {
+    const announcedBadge = r.announced
+      ? '<span style="background:#d1fae5;color:#065f46;font-size:10px;padding:2px 7px;border-radius:20px;font-weight:600">已公告</span>'
+      : '<span style="background:#fef3c7;color:#92400e;font-size:10px;padding:2px 7px;border-radius:20px;font-weight:600">待公告</span>';
+    const fetchedDate = r.fetched_at ? new Date(r.fetched_at).toLocaleDateString('zh-TW') : '—';
+    const note = escStr(r.version_note || r.summary || '').substring(0, 80);
+    return `<tr>
+      <td style="font-weight:700;color:var(--navy);white-space:nowrap">${escStr(r.amend_date)}</td>
+      <td style="font-size:12px;color:var(--muted)">${note || '修正公告'}</td>
+      <td style="text-align:center">${announcedBadge}</td>
+      <td style="font-size:11px;color:var(--muted);white-space:nowrap">${fetchedDate}</td>
+      <td style="text-align:center">
+        <a href="${escStr(r.source_url)}" target="_blank"
+           style="font-size:11px;color:var(--accent);text-decoration:none">查看 ↗</a>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function triggerLaborLawCheck() {
+  const btn = event && event.target;
+  if (btn) { btn.disabled = true; btn.textContent = '檢查中...'; }
+  const res = await api('/api/labor-law/check', { method: 'POST' });
+  if (btn) { btn.disabled = false; btn.textContent = '立即檢查更新'; }
+  if (res.ok) {
+    showToast('已觸發背景檢查，約 30 秒後請重新整理', 'success');
+    setTimeout(loadLaborLawUpdates, 35000);
+  } else {
+    showToast('檢查觸發失敗', 'error');
+  }
 }
 </script>
 </html>

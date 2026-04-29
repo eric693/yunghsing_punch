@@ -6900,6 +6900,242 @@ def api_auto_generate_schedule():
     })
 
 
+# ═══════════════════════════════════════════════════════════════════
+# 勞基法自動更新通知 (Labor Law Auto-Monitor)
+# ═══════════════════════════════════════════════════════════════════
+
+def _init_labor_law_db():
+    try:
+        with get_db() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS labor_law_updates (
+                    id          SERIAL PRIMARY KEY,
+                    law_name    TEXT NOT NULL DEFAULT '勞動基準法',
+                    amend_date  DATE NOT NULL,
+                    version_note TEXT DEFAULT '',
+                    summary     TEXT DEFAULT '',
+                    source_url  TEXT DEFAULT 'https://law.moj.gov.tw/LawClass/LawHistory.aspx?pcode=N0030001',
+                    announced   BOOLEAN DEFAULT FALSE,
+                    fetched_at  TIMESTAMPTZ DEFAULT NOW(),
+                    created_at  TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE(law_name, amend_date)
+                )
+            """)
+    except Exception as e:
+        print(f"[labor_law_init] {e}")
+
+_init_labor_law_db()
+
+
+def _scrape_labor_law_updates():
+    """
+    Fetch 勞動基準法 amendment history from 全國法規資料庫.
+    Returns list of dicts: {amend_date, version_note, summary, source_url}
+    """
+    import urllib.request as _ur
+    import html.parser as _hp
+    import re as _re
+
+    LAW_HISTORY_URL = 'https://law.moj.gov.tw/LawClass/LawHistory.aspx?pcode=N0030001'
+    LAW_CONTENT_URL = 'https://law.moj.gov.tw/LawClass/LawAll.aspx?pcode=N0030001'
+
+    class _HistoryParser(_hp.HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.in_td = False
+            self.cells = []
+            self.current_cell = ''
+            self.rows = []
+            self.current_row = []
+
+        def handle_starttag(self, tag, attrs):
+            if tag == 'tr':
+                self.current_row = []
+            elif tag in ('td', 'th'):
+                self.in_td = True
+                self.current_cell = ''
+
+        def handle_endtag(self, tag):
+            if tag in ('td', 'th'):
+                self.in_td = False
+                self.current_row.append(self.current_cell.strip())
+            elif tag == 'tr':
+                if self.current_row:
+                    self.rows.append(self.current_row)
+
+        def handle_data(self, data):
+            if self.in_td:
+                self.current_cell += data
+
+    results = []
+    try:
+        req = _ur.Request(
+            LAW_HISTORY_URL,
+            headers={'User-Agent': 'Mozilla/5.0 (compatible; LaborLawMonitor/1.0)'}
+        )
+        with _ur.urlopen(req, timeout=20) as resp:
+            raw = resp.read()
+            try:
+                content = raw.decode('utf-8')
+            except Exception:
+                content = raw.decode('big5', errors='replace')
+
+        parser = _HistoryParser()
+        parser.feed(content)
+
+        date_pat = _re.compile(r'(\d{3,4})[./年](\d{1,2})[./月](\d{1,2})')
+        seen = set()
+        for row in parser.rows:
+            text = ' '.join(row)
+            m = date_pat.search(text)
+            if not m:
+                continue
+            yr, mo, dy = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            # 民國 → 西元
+            if yr < 1900:
+                yr += 1911
+            if not (1984 <= yr <= 2099 and 1 <= mo <= 12 and 1 <= dy <= 31):
+                continue
+            date_str = f"{yr:04d}-{mo:02d}-{dy:02d}"
+            if date_str in seen:
+                continue
+            seen.add(date_str)
+            note = ' '.join(c for c in row if c and not date_pat.search(c))[:200]
+            results.append({
+                'amend_date': date_str,
+                'version_note': note.strip(),
+                'summary': f'勞動基準法於 {yr} 年 {mo} 月 {dy} 日修正',
+                'source_url': LAW_HISTORY_URL,
+            })
+
+        results.sort(key=lambda x: x['amend_date'], reverse=True)
+    except Exception as e:
+        print(f"[labor_law_scrape] {e}")
+
+    return results
+
+
+def _run_labor_law_check():
+    """Scrape and store new 勞基法 amendments; auto-announce if new ones found."""
+    updates = _scrape_labor_law_updates()
+    if not updates:
+        print("[labor_law_check] no data returned from scraper")
+        return
+
+    new_count = 0
+    for u in updates:
+        try:
+            with get_db() as conn:
+                existing = conn.execute(
+                    "SELECT id FROM labor_law_updates WHERE law_name='勞動基準法' AND amend_date=%s",
+                    (u['amend_date'],)
+                ).fetchone()
+                if existing:
+                    continue
+                conn.execute("""
+                    INSERT INTO labor_law_updates
+                      (law_name, amend_date, version_note, summary, source_url, announced)
+                    VALUES ('勞動基準法', %s, %s, %s, %s, FALSE)
+                    ON CONFLICT (law_name, amend_date) DO NOTHING
+                """, (u['amend_date'], u['version_note'], u['summary'], u['source_url']))
+                new_count += 1
+        except Exception as e:
+            print(f"[labor_law_check] db error: {e}")
+
+    if new_count > 0:
+        print(f"[labor_law_check] {new_count} new amendment(s) found, creating announcement")
+        try:
+            with get_db() as conn:
+                latest = conn.execute("""
+                    SELECT * FROM labor_law_updates
+                    WHERE announced=FALSE
+                    ORDER BY amend_date DESC
+                    LIMIT 5
+                """).fetchall()
+                if latest:
+                    dates = '、'.join(dict(r)['amend_date'] for r in latest)
+                    title = f"勞動基準法修正公告（{dates}）"
+                    lines = [f"系統偵測到勞動基準法新修正版本，請人資部門注意相關條文變動：\n"]
+                    for r in latest:
+                        rd = dict(r)
+                        lines.append(f"・修正日期：{rd['amend_date']}")
+                        if rd.get('version_note'):
+                            lines.append(f"  {rd['version_note']}")
+                        lines.append(f"  來源：{rd['source_url']}")
+                    lines.append("\n請至全國法規資料庫確認詳細條文內容。")
+                    content = '\n'.join(lines)
+                    conn.execute("""
+                        INSERT INTO announcements
+                          (title, content, category, priority, is_pinned, visible_to, author, active)
+                        VALUES (%s, %s, 'labor_law', 'high', TRUE, 'admin', '勞基法監控系統', TRUE)
+                    """, (title, content))
+                    conn.execute("""
+                        UPDATE labor_law_updates SET announced=TRUE
+                        WHERE announced=FALSE
+                    """)
+        except Exception as e:
+            print(f"[labor_law_check] announce error: {e}")
+    else:
+        print("[labor_law_check] no new amendments")
+
+
+def _labor_law_check_loop():
+    """Weekly background check for 勞基法 updates."""
+    import time as _t
+    # 首次啟動延遲 30 秒，避免與其他 init 衝突
+    _t.sleep(30)
+    _run_labor_law_check()
+    while True:
+        # 每 7 天檢查一次
+        _t.sleep(7 * 24 * 3600)
+        _run_labor_law_check()
+
+
+threading.Thread(target=_labor_law_check_loop, daemon=True).start()
+
+
+# ── API: 勞基法更新記錄 ──────────────────────────────────────────
+
+@app.route('/api/labor-law/updates', methods=['GET'])
+@login_required
+def api_labor_law_list():
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT * FROM labor_law_updates
+            ORDER BY amend_date DESC
+            LIMIT 100
+        """).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        if d.get('amend_date'):
+            d['amend_date'] = str(d['amend_date'])
+        if d.get('fetched_at'):
+            d['fetched_at'] = d['fetched_at'].isoformat()
+        if d.get('created_at'):
+            d['created_at'] = d['created_at'].isoformat()
+        result.append(d)
+    return jsonify(result)
+
+
+@app.route('/api/labor-law/check', methods=['POST'])
+@login_required
+def api_labor_law_trigger_check():
+    """手動觸發立即檢查勞基法更新"""
+    threading.Thread(target=_run_labor_law_check, daemon=True).start()
+    return jsonify({'ok': True, 'message': '已開始背景檢查，請稍後重新整理'})
+
+
+@app.route('/api/labor-law/badge', methods=['GET'])
+@login_required
+def api_labor_law_badge():
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM labor_law_updates WHERE announced=FALSE"
+        ).fetchone()
+    return jsonify({'unread': row['cnt'] if row else 0})
+
+
 # ─── Entry Point ──────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
