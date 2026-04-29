@@ -3023,7 +3023,7 @@ def api_ot_review(rid):
         if action == 'approve':
             staff = conn.execute("""
                 SELECT base_salary, hourly_rate, daily_hours,
-                       ot_rate1, ot_rate2, salary_type
+                       ot_rate1, ot_rate2, ot_rate3, salary_type
                 FROM punch_staff WHERE id=%s
             """, (req['staff_id'],)).fetchone()
             if staff:
@@ -3910,11 +3910,11 @@ def api_leave_summary(staff_id, month):
 
 # ═══════════════════════════════════════════════════════════════════
 # Salary Management (薪資管理)
-# 2026 勞基法：
-#   勞保費率 10.5%（員工負擔 20%=2.1%，含就業保險）
-#   健保費率 5.17%（員工負擔 30%=1.551%）
+# 2026 費率基準：
+#   勞保費率 12.5%（員工負擔 20% = 2.5%，含就業保險1%由雇主全額負擔）
+#   健保費率 5.17%（員工負擔 30% = 1.551%）
 #   勞退提撥 6%（雇主強制提撥，員工自願另計）
-#   最低工資 2026年 NT$28,590（月薪）
+#   最低工資 2026年 NT$28,590（月薪）/ NT$190（時薪）
 # ═══════════════════════════════════════════════════════════════════
 
 def _get_salary_calc_settings():
@@ -4135,13 +4135,15 @@ def _calc_punch_hours(conn, staff_id, month):
         work_end   = max(outs)
         gross_mins = (work_end - work_start).total_seconds() / 60
 
-        # 扣除休息時間
+        # 扣除休息時間（每個 break_in 只能被一個 break_out 使用）
         break_mins = 0.0
-        for bo in b_out:
-            # 找最近的 break_in
-            matched = [bi for bi in b_in if bi > bo]
+        _available_b_in = sorted(b_in)
+        for bo in sorted(b_out):
+            matched = [bi for bi in _available_b_in if bi > bo]
             if matched:
-                break_mins += (min(matched) - bo).total_seconds() / 60
+                bi_used = min(matched)
+                break_mins += (bi_used - bo).total_seconds() / 60
+                _available_b_in.remove(bi_used)
 
         net_mins = max(0.0, gross_mins - break_mins)
         net_hrs  = round(net_mins / 60, 2)
@@ -4227,24 +4229,50 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
     """, (staff['id'], month)).fetchone()
     ot_pay = float(ot_rows['total']) if ot_rows else 0.0
 
-    # ── 請假資訊（只計算本月實際落在該月份的天數） ──────────────
+    # ── 請假資訊（只計算本月實際落在該月份的工作天數，排除週日） ──────────────
     _month_first = f'{y}-{m:02d}-01'
     _month_last  = f'{y}-{m:02d}-{_cal2.monthrange(y, m)[1]:02d}'
-    leave_rows = conn.execute("""
+    _mf_date = _d5.fromisoformat(_month_first)
+    _ml_date = _d5.fromisoformat(_month_last)
+    _leave_raw = conn.execute("""
         SELECT lt.pay_rate, lt.code, lt.name as leave_name,
-               GREATEST(0,
-                 (LEAST(lr.end_date, %s::date) - GREATEST(lr.start_date, %s::date) + 1)
-               )::numeric AS days_in_month
+               GREATEST(lr.start_date, %s::date) AS eff_start,
+               LEAST(lr.end_date, %s::date)      AS eff_end
         FROM leave_requests lr
         JOIN leave_types lt ON lt.id = lr.leave_type_id
         WHERE lr.staff_id=%s AND lr.status='approved'
           AND lr.start_date <= %s AND lr.end_date >= %s
-    """, (_month_last, _month_first, staff['id'], _month_last, _month_first)).fetchall()
-    leave_days    = sum(float(r['days_in_month']) for r in leave_rows)
-    unpaid_days   = sum(float(r['days_in_month']) for r in leave_rows if float(r['pay_rate']) == 0)
-    half_pay_days = sum(float(r['days_in_month']) for r in leave_rows if 0 < float(r['pay_rate']) < 1)
-    personal_days = sum(float(r['days_in_month']) for r in leave_rows if r['code'] == 'personal')
-    sick_days     = sum(float(r['days_in_month']) for r in leave_rows if r['code'] == 'sick')
+    """, (_month_first, _month_last, staff['id'], _month_last, _month_first)).fetchall()
+
+    def _count_working_days(start, end):
+        """計算 start..end 之間的工作天（排除週日）"""
+        if not start or not end: return 0.0
+        if isinstance(start, str): start = _d5.fromisoformat(start)
+        if isinstance(end,   str): end   = _d5.fromisoformat(end)
+        count = 0.0
+        cur = start
+        while cur <= end:
+            if cur.weekday() != 6:  # 排除週日（勞基法最低標準）
+                count += 1.0
+            cur += _td5(days=1)
+        return count
+
+    _leave_wd = []
+    for r in _leave_raw:
+        wd = _count_working_days(r['eff_start'], r['eff_end'])
+        _leave_wd.append({
+            'pay_rate':      float(r['pay_rate']),
+            'code':          r['code'],
+            'leave_name':    r['leave_name'],
+            'days_in_month': wd,
+        })
+
+    leave_days    = sum(x['days_in_month'] for x in _leave_wd)
+    unpaid_days   = sum(x['days_in_month'] for x in _leave_wd if x['pay_rate'] == 0)
+    half_pay_days = sum(x['days_in_month'] for x in _leave_wd if 0 < x['pay_rate'] < 1)
+    personal_days = sum(x['days_in_month'] for x in _leave_wd if x['code'] == 'personal')
+    sick_days     = sum(x['days_in_month'] for x in _leave_wd if x['code'] == 'sick')
+    leave_rows    = _leave_wd   # 後面 leave_names 使用 r['leave_name'] 字典存取
     actual_days   = max(0.0, total_work_days - leave_days)
 
     # ── 日薪 / 時薪（用於請假扣款） ───────────────────────
@@ -4336,15 +4364,17 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         # 時薪制加班費（從打卡計算，若無申請記錄則估算）
         # 先用「加班申請」核准金額；若為 0 則嘗試從工時估算
         if ot_pay == 0 and actual_work_hours > 0:
-            # 每天超過 daily_hours 的部分算加班
+            # 每天超過 daily_hours 的部分算加班（三段費率：前2h/次2h/超4h）
+            rate1 = float(staff.get('ot_rate1') or 1.33)
+            rate2 = float(staff.get('ot_rate2') or 1.67)
+            rate3 = float(staff.get('ot_rate3') or 2.0)
             for pd in punch_details:
                 overtime_h = max(0.0, pd['net_hours'] - daily_hours)
                 if overtime_h > 0:
                     h1 = min(overtime_h, 2.0)
-                    h2 = max(0.0, overtime_h - 2.0)
-                    rate1 = float(staff.get('ot_rate1') or 1.33)
-                    rate2 = float(staff.get('ot_rate2') or 1.67)
-                    ot_pay += round(hourly_rate * (h1 * rate1 + h2 * rate2), 2)
+                    h2 = min(max(0.0, overtime_h - 2.0), 2.0)
+                    h3 = max(0.0, overtime_h - 4.0)
+                    ot_pay += round(hourly_rate * (h1 * rate1 + h2 * rate2 + h3 * rate3), 2)
 
         # 時薪制的保險費以 insured_salary 為準（若未設定則用月薪換算）
         if insured_salary == 0:
