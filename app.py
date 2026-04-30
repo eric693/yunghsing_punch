@@ -3037,6 +3037,14 @@ def api_ot_review(rid):
             WHERE id=%s RETURNING *
         """, (new_status, reviewed_by, review_note, ot_pay_final, rid)).fetchone()
 
+        # 加班狀態改變 → 刪除該月 draft 薪資，確保下次產生時重算加班費
+        if row:
+            ot_month = str(req['request_date'])[:7]
+            conn.execute("""
+                DELETE FROM salary_records
+                WHERE staff_id=%s AND month=%s AND status='draft'
+            """, (req['staff_id'], ot_month))
+
         sn = conn.execute(
             "SELECT name FROM punch_staff WHERE id=%s", (req['staff_id'],)
         ).fetchone()
@@ -3603,6 +3611,15 @@ def api_leave_request_review(rid):
             # 已核准的假單被改拒絕：補回餘額
             _update_leave_balance(conn, old['staff_id'], old['leave_type_id'],
                                   str(old['start_date'])[:4], -delta)
+
+        # 請假狀態改變 → 刪除受影響月份的 draft 薪資，確保重算扣款
+        if old_status != new_status:
+            affected_months = {str(old['start_date'])[:7], str(old['end_date'])[:7]}
+            for _m in affected_months:
+                conn.execute("""
+                    DELETE FROM salary_records
+                    WHERE staff_id=%s AND month=%s AND status='draft'
+                """, (old['staff_id'], _m))
     if row:
         total_hours = old.get('total_hours')
         duration_str = f"{float(total_hours)} 小時" if total_hours else f"{float(old['total_days'])} 天"
@@ -3953,7 +3970,11 @@ def init_salary_db():
         )""",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS salary_item_ids JSONB DEFAULT NULL",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS salary_item_overrides JSONB DEFAULT NULL",
-        "ALTER TABLE salary_records ADD COLUMN IF NOT EXISTS income_tax_withheld NUMERIC(12,2) DEFAULT 0",
+        "ALTER TABLE salary_records ADD COLUMN IF NOT EXISTS income_tax_withheld    NUMERIC(12,2) DEFAULT 0",
+        "ALTER TABLE salary_records ADD COLUMN IF NOT EXISTS absent_days           NUMERIC(5,1)  DEFAULT 0",
+        "ALTER TABLE salary_records ADD COLUMN IF NOT EXISTS whole_day_leave_days  NUMERIC(5,1)  DEFAULT 0",
+        "ALTER TABLE salary_records ADD COLUMN IF NOT EXISTS hourly_base_pay       NUMERIC(12,2) DEFAULT 0",
+        "ALTER TABLE salary_records ADD COLUMN IF NOT EXISTS actual_work_hours     NUMERIC(8,2)  DEFAULT 0",
         """CREATE TABLE IF NOT EXISTS salary_records (
             id              SERIAL PRIMARY KEY,
             staff_id        INT REFERENCES punch_staff(id) ON DELETE CASCADE,
@@ -4592,6 +4613,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         'leave_days':            leave_days,
         'unpaid_days':           unpaid_days,
         'absent_days':           absent_days,
+        'whole_day_leave_days':  whole_day_leave_days,
         'ot_pay':                ot_pay,
         'allowance_total':       round(allowance_total, 2),
         'deduction_total':       round(deduction_total, 2),
@@ -4621,8 +4643,18 @@ def api_my_payslip():
             JOIN punch_staff ps ON ps.id = sr.staff_id
             WHERE sr.staff_id = %s AND sr.month = %s
         """, (sid, month)).fetchone()
-    if not row:
-        return jsonify({'error': f'{month} 尚無薪資記錄，請聯絡管理員'}), 404
+        if not row:
+            # 無薪資記錄時即時計算草稿，讓員工可以提前預覽
+            staff = conn.execute("SELECT * FROM punch_staff WHERE id=%s", (sid,)).fetchone()
+            if not staff:
+                return jsonify({'error': '找不到員工資料'}), 404
+            data = _auto_generate_salary(conn, dict(staff), month)
+            data['staff_name']    = staff['name']
+            data['staff_role']    = staff['role'] or ''
+            data['employee_code'] = staff['employee_code'] or ''
+            data['department']    = staff['department'] or ''
+            data['is_preview']    = True   # 標記為預覽，尚未由管理員確認
+            return jsonify(data)
     d = salary_record_row(row)
     d['staff_name']    = row['staff_name']
     d['staff_role']    = row['staff_role']
@@ -4630,6 +4662,7 @@ def api_my_payslip():
     d['department']    = row['department']    or ''
     d['salary_type']   = row['salary_type']   or 'monthly'
     d['hourly_rate']   = float(row['hourly_rate'] or 0)
+    d['is_preview']    = False
     return jsonify(d)
 
 # ── Salary Calc Settings ──────────────────────────────────────────
@@ -4772,21 +4805,28 @@ def api_salary_generate():
                 INSERT INTO salary_records
                   (staff_id, month, base_salary, insured_salary, work_days, actual_days,
                    leave_days, unpaid_days, ot_pay, allowance_total, deduction_total,
-                   net_pay, income_tax_withheld, items, status, updated_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,'draft',NOW())
+                   net_pay, income_tax_withheld, items, status, updated_at,
+                   absent_days, whole_day_leave_days, hourly_base_pay, actual_work_hours)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,'draft',NOW(),%s,%s,%s,%s)
                 ON CONFLICT (staff_id, month) DO UPDATE
                   SET base_salary=%s, insured_salary=%s, work_days=%s, actual_days=%s,
                       leave_days=%s, unpaid_days=%s, ot_pay=%s, allowance_total=%s,
                       deduction_total=%s, net_pay=%s, income_tax_withheld=%s, items=%s::jsonb,
+                      absent_days=%s, whole_day_leave_days=%s, hourly_base_pay=%s, actual_work_hours=%s,
                       status='draft', updated_at=NOW()
             """, (
                 data['staff_id'], month, data['base_salary'], data['insured_salary'],
                 data['work_days'], data['actual_days'], data['leave_days'], data['unpaid_days'],
                 data['ot_pay'], data['allowance_total'], data['deduction_total'],
                 data['net_pay'], data['income_tax_withheld'], items_json,
+                data.get('absent_days', 0), data.get('whole_day_leave_days', 0),
+                data.get('hourly_base_pay', 0), data.get('actual_work_hours', 0),
+                # ON CONFLICT SET
                 data['base_salary'], data['insured_salary'], data['work_days'], data['actual_days'],
                 data['leave_days'], data['unpaid_days'], data['ot_pay'], data['allowance_total'],
                 data['deduction_total'], data['net_pay'], data['income_tax_withheld'], items_json,
+                data.get('absent_days', 0), data.get('whole_day_leave_days', 0),
+                data.get('hourly_base_pay', 0), data.get('actual_work_hours', 0),
             ))
             generated += 1
     return jsonify({'ok': True, 'generated': generated, 'skipped': skipped, 'month': month})
