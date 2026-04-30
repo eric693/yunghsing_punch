@@ -4209,6 +4209,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
 
     # ── 時薪制：從打卡記錄計算工時 ──────────────────────────
     actual_work_hours = 0.0
+    punch_work_days   = 0
     punch_details     = []
     if salary_type == 'hourly':
         actual_work_hours, punch_work_days, punch_details = _calc_punch_hours(
@@ -4245,15 +4246,21 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
     """, (_month_first, _month_last, staff['id'], _month_last, _month_first)).fetchall()
 
     def _count_working_days(start, end):
-        """計算 start..end 之間的工作天（排除週六、週日）"""
+        """計算 start..end 之間的工作天。
+        有排班資料時只計排班日（已含假日/假日補假排除）；
+        無排班資料時計週一至週五。"""
         if not start or not end: return 0.0
         if isinstance(start, str): start = _d5.fromisoformat(start)
         if isinstance(end,   str): end   = _d5.fromisoformat(end)
         count = 0.0
         cur = start
         while cur <= end:
-            if cur.weekday() < 5:  # 排除週六、週日
-                count += 1.0
+            if scheduled_dates:
+                if cur.isoformat() in scheduled_dates:
+                    count += 1.0
+            else:
+                if cur.weekday() < 5:
+                    count += 1.0
             cur += _td5(days=1)
         return count
 
@@ -4268,12 +4275,15 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         })
 
     leave_days    = sum(x['days_in_month'] for x in _leave_wd)
-    unpaid_days   = sum(x['days_in_month'] for x in _leave_wd if x['pay_rate'] == 0)
-    half_pay_days = sum(x['days_in_month'] for x in _leave_wd if 0 < x['pay_rate'] < 1)
+    unpaid_days   = sum(x['days_in_month'] for x in _leave_wd if float(x['pay_rate']) < 0.001)
+    half_pay_days = sum(x['days_in_month'] for x in _leave_wd if 0.001 <= float(x['pay_rate']) <= 0.999)
     personal_days = sum(x['days_in_month'] for x in _leave_wd if x['code'] == 'personal')
     sick_days     = sum(x['days_in_month'] for x in _leave_wd if x['code'] == 'sick')
     leave_rows    = _leave_wd   # 後面 leave_names 使用 r['leave_name'] 字典存取
-    actual_days   = max(0.0, total_work_days - leave_days)
+    if salary_type == 'hourly':
+        actual_days = max(0.0, float(punch_work_days) - leave_days)
+    else:
+        actual_days = max(0.0, total_work_days - leave_days)
 
     # ── 日薪 / 時薪（用於請假扣款） ───────────────────────
     if salary_type == 'hourly':
@@ -4457,7 +4467,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
     if _sal_cfg['auto_leave_deduction']:
         if unpaid_days > 0 and daily_wage > 0:
             leave_names = '、'.join(set(
-                r['leave_name'] for r in leave_rows if float(r['pay_rate']) == 0
+                r['leave_name'] for r in leave_rows if float(r['pay_rate']) < 0.001
             ))
             deduct = round(daily_wage * unpaid_days, 2)
             items.append({
@@ -4469,7 +4479,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
 
         if half_pay_days > 0 and daily_wage > 0:
             leave_names = '、'.join(set(
-                r['leave_name'] for r in leave_rows if 0 < float(r['pay_rate']) < 1
+                r['leave_name'] for r in leave_rows if 0.001 <= float(r['pay_rate']) <= 0.999
             ))
             deduct = round(daily_wage * half_pay_days * 0.5, 2)
             items.append({
