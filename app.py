@@ -4038,8 +4038,9 @@ def _eval_formula(formula, base_salary, insured_salary, service_years, extra=Non
     """安全計算薪資公式
     可用變數：base_salary, insured_salary, service_years,
               actual_days, work_days, leave_days, unpaid_days,
+              whole_day_leave_days（整天假天數，小時請假不計入，全勤判斷用此變數）,
               personal_days, sick_days, daily_wage
-    支援條件式：例如 3000*(0.5 if personal_days==1 else (1 if personal_days>=2 else 0))
+    支援條件式：例如 3000 if whole_day_leave_days==0 else 0
     """
     if not formula: return 0.0
     try:
@@ -4238,7 +4239,8 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
     _leave_raw = conn.execute("""
         SELECT lt.pay_rate, lt.code, lt.name as leave_name,
                GREATEST(lr.start_date, %s::date) AS eff_start,
-               LEAST(lr.end_date, %s::date)      AS eff_end
+               LEAST(lr.end_date, %s::date)      AS eff_end,
+               COALESCE(lr.total_hours, 0)        AS leave_hours
         FROM leave_requests lr
         JOIN leave_types lt ON lt.id = lr.leave_type_id
         WHERE lr.staff_id=%s AND lr.status='approved'
@@ -4265,20 +4267,43 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         return count
 
     _leave_wd = []
+    _hourly_unpaid_hours = 0.0   # 小時無薪假（扣款用）
+    _hourly_halfpay_hours = 0.0  # 小時半薪假
     for r in _leave_raw:
-        wd = _count_working_days(r['eff_start'], r['eff_end'])
-        _leave_wd.append({
-            'pay_rate':      float(r['pay_rate']),
-            'code':          r['code'],
-            'leave_name':    r['leave_name'],
-            'days_in_month': wd,
-        })
+        lh = float(r['leave_hours'] or 0)
+        is_hourly_leave = lh > 0
+        if is_hourly_leave:
+            # 小時請假：不計入天數，獨立累計工時
+            _leave_wd.append({
+                'pay_rate':      float(r['pay_rate']),
+                'code':          r['code'],
+                'leave_name':    r['leave_name'],
+                'days_in_month': 0.0,
+                'is_hourly':     True,
+                'hours':         lh,
+            })
+            if float(r['pay_rate']) < 0.001:
+                _hourly_unpaid_hours += lh
+            elif 0.001 <= float(r['pay_rate']) <= 0.999:
+                _hourly_halfpay_hours += lh
+        else:
+            wd = _count_working_days(r['eff_start'], r['eff_end'])
+            _leave_wd.append({
+                'pay_rate':      float(r['pay_rate']),
+                'code':          r['code'],
+                'leave_name':    r['leave_name'],
+                'days_in_month': wd,
+                'is_hourly':     False,
+                'hours':         0.0,
+            })
 
+    # leave_days / unpaid_days 只計整天假，不含小時請假 → 全勤判斷正確
     leave_days    = sum(x['days_in_month'] for x in _leave_wd)
     unpaid_days   = sum(x['days_in_month'] for x in _leave_wd if float(x['pay_rate']) < 0.001)
     half_pay_days = sum(x['days_in_month'] for x in _leave_wd if 0.001 <= float(x['pay_rate']) <= 0.999)
     personal_days = sum(x['days_in_month'] for x in _leave_wd if x['code'] == 'personal')
     sick_days     = sum(x['days_in_month'] for x in _leave_wd if x['code'] == 'sick')
+    whole_day_leave_days = leave_days   # 只含整天假，公式中判斷全勤用此變數
     leave_rows    = _leave_wd   # 後面 leave_names 使用 r['leave_name'] 字典存取
     if salary_type == 'hourly':
         actual_days = max(0.0, float(punch_work_days) - leave_days)
@@ -4333,13 +4358,14 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
 
     # 公式額外變數（出勤/假別相關）
     _formula_extra = {
-        'actual_days':   max(0.0, actual_days - absent_days),
-        'work_days':     float(total_work_days),
-        'leave_days':    leave_days,
-        'unpaid_days':   unpaid_days,
-        'personal_days': personal_days,
-        'sick_days':     sick_days,
-        'daily_wage':    daily_wage,
+        'actual_days':          max(0.0, actual_days - absent_days),
+        'work_days':            float(total_work_days),
+        'leave_days':           leave_days,
+        'whole_day_leave_days': whole_day_leave_days,  # 全勤判斷用，小時請假不影響此值
+        'unpaid_days':          unpaid_days,
+        'personal_days':        personal_days,
+        'sick_days':            sick_days,
+        'daily_wage':           daily_wage,
     }
 
     # ── 組裝薪資項目 ────────────────────────────────────────
@@ -4465,9 +4491,11 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
 
     # ── 請假扣款（可透過薪資計算設定關閉，改由薪資項目公式處理） ──
     if _sal_cfg['auto_leave_deduction']:
+        # 整天無薪假
         if unpaid_days > 0 and daily_wage > 0:
             leave_names = '、'.join(set(
-                r['leave_name'] for r in leave_rows if float(r['pay_rate']) < 0.001
+                r['leave_name'] for r in leave_rows
+                if float(r['pay_rate']) < 0.001 and not r['is_hourly']
             ))
             deduct = round(daily_wage * unpaid_days, 2)
             items.append({
@@ -4477,15 +4505,45 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
             })
             deduction_total += deduct
 
+        # 小時無薪假（按時薪扣，不影響全勤）
+        if _hourly_unpaid_hours > 0 and hourly_wage > 0:
+            leave_names = '、'.join(set(
+                r['leave_name'] for r in leave_rows
+                if float(r['pay_rate']) < 0.001 and r['is_hourly']
+            ))
+            deduct = round(hourly_wage * _hourly_unpaid_hours, 2)
+            items.append({
+                'id': 'unpaid_hourly', 'name': f'無薪假扣款-小時（{leave_names}）', 'type': 'deduction',
+                'amount': deduct, 'formula': '',
+                'calc_note': f'{_hourly_unpaid_hours}h × 時薪${round(hourly_wage, 1)}',
+            })
+            deduction_total += deduct
+
+        # 整天半薪假
         if half_pay_days > 0 and daily_wage > 0:
             leave_names = '、'.join(set(
-                r['leave_name'] for r in leave_rows if 0.001 <= float(r['pay_rate']) <= 0.999
+                r['leave_name'] for r in leave_rows
+                if 0.001 <= float(r['pay_rate']) <= 0.999 and not r['is_hourly']
             ))
             deduct = round(daily_wage * half_pay_days * 0.5, 2)
             items.append({
                 'id': 'halfpay', 'name': f'半薪假扣款（{leave_names}）', 'type': 'deduction',
                 'amount': deduct, 'formula': '',
                 'calc_note': f'{half_pay_days}天 × 日薪${round(daily_wage, 0)} × 0.5',
+            })
+            deduction_total += deduct
+
+        # 小時半薪假（按時薪 × 0.5 扣）
+        if _hourly_halfpay_hours > 0 and hourly_wage > 0:
+            leave_names = '、'.join(set(
+                r['leave_name'] for r in leave_rows
+                if 0.001 <= float(r['pay_rate']) <= 0.999 and r['is_hourly']
+            ))
+            deduct = round(hourly_wage * _hourly_halfpay_hours * 0.5, 2)
+            items.append({
+                'id': 'halfpay_hourly', 'name': f'半薪假扣款-小時（{leave_names}）', 'type': 'deduction',
+                'amount': deduct, 'formula': '',
+                'calc_note': f'{_hourly_halfpay_hours}h × 時薪${round(hourly_wage, 1)} × 0.5',
             })
             deduction_total += deduct
 
