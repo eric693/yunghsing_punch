@@ -1188,7 +1188,16 @@ def api_punch_record_update(rid):
 @login_required
 def api_punch_record_delete(rid):
     with get_db() as conn:
+        pr = conn.execute("SELECT staff_id, punched_at FROM punch_records WHERE id=%s", (rid,)).fetchone()
         conn.execute("DELETE FROM punch_records WHERE id=%s", (rid,))
+        if pr and pr['staff_id']:
+            punch_month = (pr['punched_at'].strftime('%Y-%m')
+                           if hasattr(pr['punched_at'], 'strftime')
+                           else str(pr['punched_at'])[:7])
+            conn.execute("""
+                DELETE FROM salary_records
+                WHERE staff_id=%s AND month=%s AND status='draft'
+            """, (pr['staff_id'], punch_month))
     return jsonify({'deleted': rid})
 
 @app.route('/api/punch/summary', methods=['GET'])
@@ -2488,13 +2497,21 @@ def api_shift_assignment_batch_delete():
         return jsonify({'error': '請選擇員工及日期'}), 400
     deleted = 0
     with get_db() as conn:
+        affected = set()
         for sid in staff_ids:
             for date_str in dates:
                 r = conn.execute(
                     "DELETE FROM shift_assignments WHERE staff_id=%s AND shift_date=%s RETURNING id",
                     (sid, date_str)
                 ).fetchone()
-                if r: deleted += 1
+                if r:
+                    deleted += 1
+                    affected.add((sid, str(date_str)[:7]))
+        for _sid, _month in affected:
+            conn.execute("""
+                DELETE FROM salary_records
+                WHERE staff_id=%s AND month=%s AND status='draft'
+            """, (_sid, _month))
     return jsonify({'deleted': deleted})
 
 
@@ -3635,10 +3652,16 @@ def api_leave_request_delete(rid):
         old = conn.execute("SELECT * FROM leave_requests WHERE id=%s", (rid,)).fetchone()
         if not old:
             return jsonify({'error': '找不到假單'}), 404
-        # 若已核准，刪除前先補回餘額
+        # 若已核准，刪除前先補回餘額並清除 draft 薪資
         if old['status'] == 'approved':
             _update_leave_balance(conn, old['staff_id'], old['leave_type_id'],
                                   str(old['start_date'])[:4], -float(old['total_days']))
+            affected_months = {str(old['start_date'])[:7], str(old['end_date'])[:7]}
+            for _m in affected_months:
+                conn.execute("""
+                    DELETE FROM salary_records
+                    WHERE staff_id=%s AND month=%s AND status='draft'
+                """, (old['staff_id'], _m))
         conn.execute("DELETE FROM leave_requests WHERE id=%s", (rid,))
     return jsonify({'deleted': rid})
 
@@ -4045,7 +4068,8 @@ def salary_record_row(row):
     d = dict(row)
     for f in ['base_salary','insured_salary','work_days','actual_days','leave_days',
               'unpaid_days','ot_pay','allowance_total','deduction_total','net_pay',
-              'income_tax_withheld']:
+              'income_tax_withheld','absent_days','whole_day_leave_days',
+              'hourly_base_pay','actual_work_hours']:
         if d.get(f) is not None: d[f] = float(d[f])
     if isinstance(d.get('items'), str):
         try: d['items'] = _json.loads(d['items'])
@@ -4073,10 +4097,19 @@ def _eval_formula(formula, base_salary, insured_salary, service_years, extra=Non
         if extra:
             ctx.update({k: float(v or 0) for k, v in extra.items()})
         from simpleeval import simple_eval
-        result = simple_eval(formula, names=ctx)
-        return round(float(result), 2)
+        result = float(simple_eval(formula, names=ctx))
+        if result != result or abs(result) == float('inf'):  # NaN or Inf（除以零）
+            import logging
+            logging.warning(f"[FORMULA] 無效結果(NaN/Inf): formula={formula!r} ctx={ctx}")
+            return 0.0
+        return round(result, 2)
+    except ZeroDivisionError:
+        import logging
+        logging.error(f"[FORMULA] 除以零: formula={formula!r}")
+        return 0.0
     except Exception as e:
-        print(f"[FORMULA ERROR] formula={formula!r} error={e}")
+        import logging
+        logging.error(f"[FORMULA] 計算錯誤: formula={formula!r} error={e}")
         return 0.0
 
 def _calc_service_years(hire_date_str):
@@ -4954,6 +4987,10 @@ def api_salary_staff_update(sid):
         salary_item_ids_json = _json.dumps(salary_item_ids) if salary_item_ids is not None else None
         overrides = b.get('salary_item_overrides')  # dict {str(item_id): amount}
         overrides_json = _json.dumps(overrides) if overrides else None
+        # 先讀舊值，判斷薪資相關欄位是否有異動
+        _old = conn.execute(
+            "SELECT base_salary, insured_salary, daily_hours, hourly_rate, salary_type, ot_rate1, ot_rate2 FROM punch_staff WHERE id=%s", (sid,)
+        ).fetchone()
         conn.execute("""
             UPDATE punch_staff SET
               employee_code=%s, department=%s, position_title=%s,
@@ -4976,6 +5013,13 @@ def api_salary_staff_update(sid):
               (b.get('insurance_type') or 'regular').strip(),
               (b.get('address') or '').strip(),
               sid))
+        # 薪資計算參數有異動 → 清除該員工所有 draft 薪資，確保重算
+        _salary_keys = ('base_salary','insured_salary','daily_hours','hourly_rate','salary_type','ot_rate1','ot_rate2')
+        if _old and any(
+            str(b.get(k, '')) != str(float(_old[k] or 0) if k != 'salary_type' else (_old[k] or 'monthly'))
+            for k in _salary_keys if k in b
+        ):
+            conn.execute("DELETE FROM salary_records WHERE staff_id=%s AND status='draft'", (sid,))
         row = conn.execute("SELECT * FROM punch_staff WHERE id=%s", (sid,)).fetchone()
     return jsonify(punch_staff_row(row)) if row else ('', 404)
 
