@@ -4196,7 +4196,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
             for _d in range(1, days_in_month + 1):
                 _dt = _d5(y, m, _d)
                 _ds = _dt.isoformat()
-                if _dt.weekday() != 6 and _ds not in holiday_dates:
+                if _dt.weekday() < 5 and _ds not in holiday_dates:
                     scheduled_dates.add(_ds)
             total_work_days = len(scheduled_dates)
 
@@ -4245,14 +4245,14 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
     """, (_month_first, _month_last, staff['id'], _month_last, _month_first)).fetchall()
 
     def _count_working_days(start, end):
-        """計算 start..end 之間的工作天（排除週日）"""
+        """計算 start..end 之間的工作天（排除週六、週日）"""
         if not start or not end: return 0.0
         if isinstance(start, str): start = _d5.fromisoformat(start)
         if isinstance(end,   str): end   = _d5.fromisoformat(end)
         count = 0.0
         cur = start
         while cur <= end:
-            if cur.weekday() != 6:  # 排除週日（勞基法最低標準）
+            if cur.weekday() < 5:  # 排除週六、週日
                 count += 1.0
             cur += _td5(days=1)
         return count
