@@ -10533,10 +10533,17 @@ def _line_submit_leave(staff, user_id, text):
                 "SELECT id, name FROM leave_types WHERE active=TRUE ORDER BY sort_order"
             ).fetchall()
             balances = {
-                r['leave_type_id']: (float(r['total_days'] or 0) - float(r['used_days'] or 0))
+                r['leave_type_id']: (
+                    (float(r['total_days']) if r['total_days'] else float(r['max_days'] or 0))
+                    - float(r['used_days'] or 0)
+                )
                 for r in conn.execute("""
-                    SELECT leave_type_id, total_days, used_days FROM leave_balances
-                    WHERE staff_id=%s AND year=%s
+                    SELECT lb.leave_type_id,
+                           lb.total_days, lb.used_days,
+                           lt.max_days
+                    FROM leave_balances lb
+                    JOIN leave_types lt ON lt.id = lb.leave_type_id
+                    WHERE lb.staff_id=%s AND lb.year=%s
                 """, (staff['id'], year)).fetchall()
             }
         if not types:
@@ -10688,8 +10695,11 @@ def _line_submit_leave(staff, user_id, text):
                 days = max(0.5, days - 0.5)
 
         remain = None
-        if bal:
-            remain = float(bal['total_days'] or 0) - float(bal['used_days'] or 0)
+        if lt['max_days'] is not None:
+            used = float(bal['used_days'] or 0) if bal else 0.0
+            # total_days 為 0 表示尚未由管理員覆寫，以 leave_types.max_days 為準
+            quota = float(bal['total_days']) if (bal and bal['total_days']) else float(lt['max_days'])
+            remain = quota - used
             if remain < days:
                 _send_line_punch(user_id,
                     f'⚠️ {lt["name"]} 餘額不足\n剩餘 {remain:.1f} 天，申請 {days} 天\n\n'
