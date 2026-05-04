@@ -6045,7 +6045,7 @@ async function addSalaryAdjustment() {
   const allowTotal = items.filter(i=>i.type==='allowance').reduce((s,i)=>s+i.amount,0);
   const deductTotal = items.filter(i=>i.type==='deduction').reduce((s,i)=>s+i.amount,0);
   const body = { items, allowance_total:allowTotal, deduction_total:deductTotal, net_pay:allowTotal-deductTotal };
-  const {ok:ok2} = await api(`/api/salary/records/${id}`, apiJSON(body, 'PUT'));
+  const {ok:ok2} = await api(`/api/salary/records/${id}`, apiPUT(body));
   if (!ok2) return;
   document.getElementById('adj-name').value='';
   document.getElementById('adj-amount').value='';
