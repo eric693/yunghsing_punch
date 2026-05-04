@@ -6172,6 +6172,11 @@ def api_punch_req_review_v2(rid):
                 VALUES (%s,%s,%s,%s,TRUE,%s)
             """, (row['staff_id'], row['punch_type'], row['requested_at'],
                   f'補打卡申請 #{rid}：{row["reason"]}', reviewed_by))
+            month = row['requested_at'].strftime('%Y-%m')
+            conn.execute("""
+                DELETE FROM salary_records
+                WHERE staff_id=%s AND month=%s AND status='draft'
+            """, (row['staff_id'], month))
     # LINE notification
     LABEL = {'in':'上班打卡','out':'下班打卡','break_out':'休息開始','break_in':'休息結束'}
     dt_str = row['requested_at'].isoformat()[:16].replace('T',' ')
@@ -11351,16 +11356,18 @@ def mobile_leave_apply():
     if not leave_type_id or not start_date:
         return jsonify({'error': '缺少必填欄位'}), 400
     try:
-        sd = _dt.strptime(start_date, '%Y-%m-%d').date()
-        ed = _dt.strptime(end_date,   '%Y-%m-%d').date()
-        days = (ed - sd).days + 1
+        _dt.strptime(start_date, '%Y-%m-%d')
+        _dt.strptime(end_date,   '%Y-%m-%d')
     except Exception:
         return jsonify({'error': '日期格式錯誤'}), 400
+    total_days = _calc_leave_days(start_date, end_date)
+    if total_days <= 0:
+        return jsonify({'error': '請假天數不合理，請檢查日期'}), 400
     with get_db() as conn:
         conn.execute(
-            """INSERT INTO leave_requests (staff_id, leave_type_id, start_date, end_date, days, reason, status)
+            """INSERT INTO leave_requests (staff_id, leave_type_id, start_date, end_date, total_days, reason, status)
                VALUES (%s, %s, %s, %s, %s, %s, 'pending')""",
-            (staff_id, leave_type_id, start_date, end_date, days, reason)
+            (staff_id, leave_type_id, start_date, end_date, total_days, reason)
         )
     return jsonify({'ok': True})
 
