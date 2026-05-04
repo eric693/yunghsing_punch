@@ -10462,7 +10462,7 @@ def _line_query_leave_balance(staff, user_id):
     try:
         with get_db() as conn:
             rows = conn.execute("""
-                SELECT lb.total_days, lb.used_days, lt.name AS type_name
+                SELECT lb.total_days, lb.used_days, lt.name AS type_name, lt.max_days
                 FROM leave_balances lb
                 JOIN leave_types lt ON lt.id=lb.leave_type_id
                 WHERE lb.staff_id=%s AND lb.year=%s
@@ -10476,11 +10476,16 @@ def _line_query_leave_balance(staff, user_id):
         return
     lines = [f'📋 {staff["name"]} {year} 年假期餘額']
     for r in rows:
-        total = float(r['total_days'] or 0)
+        # total_days=0 表示尚未由管理員覆寫，以 leave_types.max_days 為準
+        total = float(r['total_days']) if r['total_days'] else (float(r['max_days']) if r['max_days'] else 0.0)
         used  = float(r['used_days']  or 0)
         remain= total - used
-        bar   = '▓' * int(remain) + '░' * max(0, int(total - remain))
-        lines.append(f'\n【{r["type_name"]}】\n  剩餘 {remain:.1f} 天 / 共 {total:.0f} 天\n  {bar}')
+        if r['max_days'] is None:
+            # 無上限假別（補休、公假）：只顯示剩餘
+            lines.append(f'\n【{r["type_name"]}】\n  剩餘 {remain:.1f} 天（無上限）')
+        else:
+            bar = '▓' * int(remain) + '░' * max(0, int(total - remain))
+            lines.append(f'\n【{r["type_name"]}】\n  剩餘 {remain:.1f} 天 / 共 {total:.0f} 天\n  {bar}')
     _send_line_punch(user_id, '\n'.join(lines))
 
 
