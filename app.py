@@ -3991,6 +3991,7 @@ def init_salary_db():
             sort_order  INT DEFAULT 0,
             created_at  TIMESTAMPTZ DEFAULT NOW()
         )""",
+        "ALTER TABLE salary_items ADD COLUMN IF NOT EXISTS code TEXT DEFAULT ''",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS salary_item_ids JSONB DEFAULT NULL",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS salary_item_overrides JSONB DEFAULT NULL",
         "ALTER TABLE salary_records ADD COLUMN IF NOT EXISTS income_tax_withheld    NUMERIC(12,2) DEFAULT 0",
@@ -4736,11 +4737,12 @@ def api_salary_item_create():
     b = request.get_json(force=True)
     with get_db() as conn:
         row = conn.execute("""
-            INSERT INTO salary_items (name, item_type, formula, amount, description, color, sort_order)
-            VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING *
+            INSERT INTO salary_items (name, item_type, formula, amount, description, color, sort_order, code)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
         """, (b['name'], b.get('item_type','allowance'), b.get('formula',''),
               float(b.get('amount',0)), b.get('description',''),
-              b.get('color','#4a7bda'), int(b.get('sort_order',0)))).fetchone()
+              b.get('color','#4a7bda'), int(b.get('sort_order',0)),
+              b.get('code',''))).fetchone()
     return jsonify(salary_item_row(row)), 201
 
 @app.route('/api/salary/items/<int:iid>', methods=['PUT'])
@@ -4750,12 +4752,12 @@ def api_salary_item_update(iid):
     with get_db() as conn:
         row = conn.execute("""
             UPDATE salary_items SET name=%s, item_type=%s, formula=%s, amount=%s,
-              description=%s, color=%s, sort_order=%s, active=%s
+              description=%s, color=%s, sort_order=%s, active=%s, code=%s
             WHERE id=%s RETURNING *
         """, (b['name'], b.get('item_type','allowance'), b.get('formula',''),
               float(b.get('amount',0)), b.get('description',''),
               b.get('color','#4a7bda'), int(b.get('sort_order',0)),
-              bool(b.get('active',True)), iid)).fetchone()
+              bool(b.get('active',True)), b.get('code',''), iid)).fetchone()
     return jsonify(salary_item_row(row)) if row else ('', 404)
 
 @app.route('/api/salary/items/<int:iid>', methods=['DELETE'])

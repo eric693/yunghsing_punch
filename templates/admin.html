@@ -1110,7 +1110,9 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
           <code>daily_wage</code>（日薪）<br>
           支援條件式：<code>值 if 條件 else 值</code>
           範例：午餐費 <code>actual_days*70</code>
-          全勤扣款 <code>3000*(0.5 if personal_days==1 else (1 if personal_days>=2 else 0))</code>
+          全勤扣款 <code>3000*(0.5 if personal_days==1 else (1 if personal_days>=2 else 0))</code><br>
+          <strong style="color:var(--text)">自訂代號：</strong>每個項目可設定代號（如 <code>position_pay</code>、<code>perf_pay</code>），代號顯示在卡片右側供計算時參照。<br>
+          <span style="color:var(--accent)">計算時薪範例：</span>（本薪 + 職務 + 績效）÷ 30 ÷ 8，對照各項目的代號自行加總後計算。
         </div>
       </div>
     </div>
@@ -2550,6 +2552,10 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
       <div class="form-row">
         <div><label class="form-label">項目名稱 *</label><input class="form-input" id="sim-name" placeholder="例：職務加給"></div>
         <div><label class="form-label">類型</label><select class="form-input" id="sim-type"><option value="allowance">津貼（加項）</option><option value="deduction">扣除（減項）</option></select></div>
+      </div>
+      <div style="margin-bottom:12px">
+        <label class="form-label">自訂代號 <span style="font-size:11px;color:var(--muted)">（英文/數字/底線，可用於公式或自行計算時參照）</span></label>
+        <input class="form-input" id="sim-code" placeholder="例：position_pay　留空則不顯示代號" style="font-family:'DM Mono',monospace">
       </div>
       <div style="margin-bottom:12px"><label class="form-label">計算公式（優先）</label><div style="display:flex;gap:6px">
           <input class="form-input" id="sim-formula" placeholder="例：insured_salary*0.105*0.2　留空則用固定金額" style="flex:1">
@@ -6321,13 +6327,14 @@ async function loadSalaryItems() {
   const deductDiv = document.getElementById('sal-items-deduct');
   const card = (it) => `<div class="card" style="margin-bottom:10px">
     <div class="card-header" style="flex-wrap:wrap;gap:8px;padding:12px 16px">
-      <div>
+      <div style="flex:1;min-width:0">
         <span style="font-size:14px;font-weight:700"><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${it.color};margin-right:6px;vertical-align:middle"></span>${escHtml(it.name)}</span>
         <div style="font-size:11px;color:var(--muted);margin-top:3px;font-family:'DM Mono',monospace">
           ${it.formula?'公式計算 '+escHtml(it.formula):`固定金額 $${fmtNum(it.amount)}`}
         </div>
       </div>
-      <div style="display:flex;gap:6px">
+      <div style="display:flex;gap:6px;align-items:center">
+        ${it.code?`<code style="font-size:11px;background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:2px 8px;color:var(--accent);font-family:'DM Mono',monospace;white-space:nowrap">${escHtml(it.code)}</code>`:''}
         <button class="btn btn-outline btn-sm" onclick="openSalaryItemModal(${it.id})">編輯</button>
         <button class="btn btn-danger btn-sm" onclick="deleteSalaryItem(${it.id})">刪除</button>
       </div>
@@ -6344,13 +6351,14 @@ function openSalaryItemModal(id=null) {
     const it = salaryItemsList.find(x=>x.id===id); if(!it) return;
     document.getElementById('sim-name').value    = it.name;
     document.getElementById('sim-type').value    = it.item_type;
+    document.getElementById('sim-code').value    = it.code||'';
     document.getElementById('sim-formula').value = it.formula||'';
     document.getElementById('sim-amount').value  = it.amount||0;
     document.getElementById('sim-color').value   = it.color||'#4a7bda';
     document.getElementById('sim-sort').value    = it.sort_order||0;
     document.getElementById('sim-active').value  = it.active?'1':'0';
   } else {
-    ['sim-name','sim-formula'].forEach(i=>document.getElementById(i).value='');
+    ['sim-name','sim-formula','sim-code'].forEach(i=>document.getElementById(i).value='');
     document.getElementById('sim-type').value='allowance';
     document.getElementById('sim-amount').value='0';
     document.getElementById('sim-color').value='#4a7bda';
@@ -6362,9 +6370,14 @@ function openSalaryItemModal(id=null) {
 function closeSalaryItemModal() { document.getElementById('sal-item-modal').style.display='none'; }
 async function saveSalaryItem() {
   const id = document.getElementById('sim-id').value;
+  const rawCode = document.getElementById('sim-code').value.trim();
+  if (rawCode && !/^[A-Za-z0-9_]+$/.test(rawCode)) {
+    showToast('代號只能使用英文字母、數字、底線','error'); return;
+  }
   const body = {
     name:       document.getElementById('sim-name').value.trim(),
     item_type:  document.getElementById('sim-type').value,
+    code:       rawCode,
     formula:    document.getElementById('sim-formula').value.trim(),
     amount:     parseFloat(document.getElementById('sim-amount').value)||0,
     color:      document.getElementById('sim-color').value,
