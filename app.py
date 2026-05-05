@@ -1433,14 +1433,16 @@ def api_punch_req_my():
 @login_required
 def api_punch_reqs_list():
     status = request.args.get('status', '')
+    month  = request.args.get('month', '')
     conds, params = ['TRUE'], []
     if status: conds.append('pr.status=%s'); params.append(status)
+    if month:  conds.append("TO_CHAR(pr.requested_at,'YYYY-MM')=%s"); params.append(month)
     with get_db() as conn:
         rows = conn.execute(f"""
             SELECT pr.*, ps.name as staff_name, ps.role as staff_role
             FROM punch_requests pr JOIN punch_staff ps ON ps.id=pr.staff_id
             WHERE {' AND '.join(conds)}
-            ORDER BY pr.created_at DESC LIMIT 200
+            ORDER BY pr.created_at DESC LIMIT 500
         """, params).fetchall()
     return jsonify([punch_req_row(r) for r in rows])
 

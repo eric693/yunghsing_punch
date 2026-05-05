@@ -502,7 +502,13 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
 
     <!-- 員工管理 -->
     <div id="punch-panel-staff" style="display:none">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+      <div class="filter-bar" style="margin-bottom:12px;gap:10px;flex-wrap:wrap">
+        <input class="filter-input" id="ps-search" placeholder="搜尋姓名 / 代碼" style="min-width:160px" oninput="renderPunchStaff()">
+        <select class="filter-input" id="ps-dept" onchange="renderPunchStaff()" style="min-width:110px"><option value="">全部部門</option></select>
+        <select class="filter-input" id="ps-status" onchange="renderPunchStaff()" style="min-width:100px">
+          <option value="">全部狀態</option><option value="1">在職</option><option value="0">停用</option>
+        </select>
+        <span style="flex:1"></span>
         <span id="punch-staff-count" style="font-size:13px;color:var(--muted)"></span>
         <button class="btn btn-primary" onclick="openPunchStaffModal()">新增員工</button>
       </div>
@@ -519,6 +525,9 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     <!-- 補打申請 -->
     <div id="punch-panel-requests" style="display:none">
       <div class="filter-bar" style="margin-bottom:20px;gap:12px;flex-wrap:wrap">
+        <span class="filter-label">月份</span>
+        <input class="filter-input" type="month" id="preq-filter-month" onchange="loadPunchRequests()" style="min-width:140px">
+        <div class="filter-divider"></div>
         <span class="filter-label">狀態</span>
         <select class="filter-input" id="preq-filter-status" onchange="loadPunchRequests()" style="min-width:120px">
           <option value="pending">待審核</option><option value="">全部</option>
@@ -584,7 +593,8 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     <!-- 離職員工 -->
     <div id="punch-panel-resigned" style="display:none">
       <div class="filter-bar" style="margin-bottom:16px;flex-wrap:wrap;gap:10px">
-        <span class="card-title" style="font-size:15px">離職員工記錄</span>
+        <input class="filter-input" id="rs-search" placeholder="搜尋姓名 / 代碼" style="min-width:160px" oninput="renderResignedStaff()">
+        <select class="filter-input" id="rs-dept" onchange="renderResignedStaff()" style="min-width:110px"><option value="">全部部門</option></select>
         <span style="flex:1"></span>
         <button class="btn btn-outline btn-sm" onclick="loadResignedStaff()">重新整理</button>
       </div>
@@ -765,8 +775,12 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
 
     <!-- 班別設定 -->
     <div id="sched-panel-shifttypes" style="display:none">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-        <span style="font-size:12px;color:var(--muted)">設定工作班別與時間</span>
+      <div class="filter-bar" style="margin-bottom:12px;gap:10px;flex-wrap:wrap">
+        <input class="filter-input" id="st-search" placeholder="搜尋班別名稱 / 部門" style="min-width:180px" oninput="renderShiftTypes()">
+        <select class="filter-input" id="st-status" onchange="renderShiftTypes()" style="min-width:100px">
+          <option value="">全部狀態</option><option value="1">啟用</option><option value="0">停用</option>
+        </select>
+        <span style="flex:1"></span>
         <button class="btn btn-primary" onclick="openShiftTypeModal()">新增班別</button>
       </div>
       <div class="card">
@@ -950,8 +964,12 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
 
     <!-- 假別設定 -->
     <div id="leave-panel-types" style="display:none">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-        <span style="font-size:12px;color:var(--muted)">設定假別名稱、薪資倍率、天數上限</span>
+      <div class="filter-bar" style="margin-bottom:12px;gap:10px;flex-wrap:wrap">
+        <input class="filter-input" id="lt-search" placeholder="搜尋假別名稱 / 代碼" style="min-width:180px" oninput="renderLeaveTypes()">
+        <select class="filter-input" id="lt-status" onchange="renderLeaveTypes()" style="min-width:100px">
+          <option value="">全部狀態</option><option value="1">啟用</option><option value="0">停用</option>
+        </select>
+        <span style="flex:1"></span>
         <button class="btn btn-primary" onclick="openLeaveTypeModal()">新增假別</button>
       </div>
       <div class="card">
@@ -989,6 +1007,12 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
       <div class="filter-bar" style="margin-bottom:20px;gap:12px;flex-wrap:wrap">
         <span class="filter-label">月份</span>
         <input class="filter-input" type="month" id="sal-month" onchange="loadSalaryRecords()">
+        <div class="filter-divider"></div>
+        <select class="filter-input" id="sal-filter-dept" onchange="renderSalaryTable()" style="min-width:110px"><option value="">全部部門</option></select>
+        <select class="filter-input" id="sal-filter-status" onchange="renderSalaryTable()" style="min-width:110px">
+          <option value="">全部狀態</option><option value="draft">草稿</option><option value="confirmed">已確認</option>
+        </select>
+        <div class="filter-divider"></div>
         <button class="btn btn-outline btn-sm" onclick="previewSalary()">預覽計算明細</button>
         <button class="btn btn-primary btn-sm" onclick="generateSalary(false)">產生薪資（草稿）</button>
         <button class="btn btn-ghost btn-sm" onclick="generateSalary(true)" style="color:var(--red);border-color:var(--red)" title="強制重算，已確認薪資也會被重置為草稿">強制重算已確認</button>
@@ -1074,7 +1098,13 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <div id="sal-cfg-msg" style="font-size:12px;color:var(--green);margin-top:10px;min-height:14px"></div>
       </div>
 
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+      <div class="filter-bar" style="margin-bottom:12px;gap:10px;flex-wrap:wrap">
+        <input class="filter-input" id="ss-search" placeholder="搜尋姓名" style="min-width:160px" oninput="renderSalaryStaff()">
+        <select class="filter-input" id="ss-dept" onchange="renderSalaryStaff()" style="min-width:110px"><option value="">全部部門</option></select>
+        <select class="filter-input" id="ss-status" onchange="renderSalaryStaff()" style="min-width:100px">
+          <option value="">全部狀態</option><option value="1">在職</option><option value="0">停用</option>
+        </select>
+        <span style="flex:1"></span>
         <span id="sal-staff-count" style="font-size:13px;color:var(--muted)"></span>
         <a href="#" onclick="showPage('punch',event);switchPunchTab('staff')" style="font-size:12px;color:var(--accent)">管理員工 →</a>
       </div>
@@ -1090,8 +1120,10 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
 
     <!-- 薪資項目 -->
     <div id="salary-panel-items" style="display:none">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div class="filter-bar" style="margin-bottom:14px;gap:10px;flex-wrap:wrap">
         <span style="font-size:12px;color:var(--muted)">設定每月薪資計算時使用的津貼和扣除項目</span>
+        <span style="flex:1"></span>
+        <input class="filter-input" id="si-search" placeholder="搜尋名稱 / 代號" style="min-width:160px" oninput="renderSalaryItems()">
         <button class="btn btn-primary" onclick="openSalaryItemModal()">新增項目</button>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px" id="salary-items-grid">
@@ -1319,6 +1351,8 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <select class="filter-input" id="fin-rec-type" onchange="loadFinRecords()" style="min-width:100px">
           <option value="">全部</option><option value="income">收入</option><option value="expense">支出</option>
         </select>
+        <select class="filter-input" id="fin-rec-cat" onchange="filterFinRecords()" style="min-width:110px"><option value="">全部類別</option></select>
+        <input class="filter-input" id="fin-rec-search" placeholder="搜尋標題 / 廠商" style="min-width:150px" oninput="filterFinRecords()">
         <span style="flex:1"></span>
         <button class="btn btn-primary btn-sm" onclick="openFinRecModal()">新增記錄</button>
       </div>
@@ -1623,8 +1657,13 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
 
   <!-- ── 帳號管理 ── -->
   <div class="page" id="page-adminmgr" style="display:none">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
-      <span style="font-size:13px;color:var(--muted)">管理後台登入帳號，可自由勾選各帳號可存取的模組</span>
+    <div class="filter-bar" style="margin-bottom:12px;gap:10px;flex-wrap:wrap">
+      <input class="filter-input" id="adm-search" placeholder="搜尋帳號 / 顯示名稱" style="min-width:180px" oninput="renderAdminAccounts()">
+      <select class="filter-input" id="adm-status" onchange="renderAdminAccounts()" style="min-width:100px">
+        <option value="">全部狀態</option><option value="1">啟用</option><option value="0">停用</option>
+      </select>
+      <span style="flex:1"></span>
+      <span style="font-size:13px;color:var(--muted)">管理後台登入帳號</span>
       <button class="btn btn-primary" onclick="openAdminAccModal()">新增帳號</button>
     </div>
     <div class="card">
@@ -1691,7 +1730,10 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
 
     <!-- 人員概覽 -->
     <div id="training-panel-overview">
-      <div class="filter-bar" style="margin-bottom:16px">
+      <div class="filter-bar" style="margin-bottom:16px;gap:10px;flex-wrap:wrap">
+        <input class="filter-input" id="trn-search" placeholder="搜尋姓名" style="min-width:140px" oninput="renderTrainingSummary()">
+        <select class="filter-input" id="trn-dept" onchange="renderTrainingSummary()" style="min-width:110px"><option value="">全部部門</option></select>
+        <span style="flex:1"></span>
         <button class="btn btn-primary btn-sm" onclick="openTrainingModal()">新增訓練記錄</button>
         <button class="btn btn-outline btn-sm" onclick="loadTrainingSummary()">重新整理</button>
       </div>
@@ -1834,7 +1876,10 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
 
   <!-- ── 費用審核 ── -->
   <div class="page" id="page-expense-review" style="display:none">
-    <div class="filter-bar" style="margin-bottom:20px">
+    <div class="filter-bar" style="margin-bottom:20px;gap:10px;flex-wrap:wrap">
+      <span class="filter-label">月份</span>
+      <input class="filter-input" type="month" id="exp-filter-month" style="min-width:140px" oninput="filterExpenseReview()">
+      <div class="filter-divider"></div>
       <span class="filter-label">狀態</span>
       <select id="exp-review-status" class="filter-input" style="min-width:100px" onchange="loadExpenseReview()">
         <option value="pending">待審核</option>
@@ -1842,6 +1887,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <option value="rejected">已拒絕</option>
         <option value="">全部</option>
       </select>
+      <input class="filter-input" id="exp-search" placeholder="搜尋申請人" style="min-width:130px" oninput="filterExpenseReview()">
       <button class="btn btn-outline btn-sm" onclick="loadExpenseReview()">重新整理</button>
     </div>
     <div class="card">
@@ -3168,21 +3214,9 @@ async function loadAnomalies() {
 // ══════════════════════════════════════════════════════════════
 async function loadResignedStaff() {
   const { ok, data } = await api('/api/punch/staff/terminated', {}, true);
-  const tb = document.getElementById('resigned-tbody');
-  if (!ok || !data.length) {
-    tb.innerHTML = '<tr><td colspan="8" class="empty-state"><div class="empty-state-text">無離職員工記錄</div></td></tr>';
-    return;
-  }
-  tb.innerHTML = data.map(s => `<tr>
-    <td style="font-weight:600">${escHtml(s.name)}</td>
-    <td style="color:var(--muted)">${escHtml(s.employee_code||'')}</td>
-    <td>${escHtml(s.department||'')}</td>
-    <td>${escHtml(s.role||'')}</td>
-    <td style="font-family:'DM Mono',monospace">${s.hire_date||'—'}</td>
-    <td style="font-family:'DM Mono',monospace;color:var(--red)">${s.termination_date||'—'}</td>
-    <td style="font-size:12px;color:var(--muted)">${escHtml(s.termination_reason||'')}</td>
-    <td><button class="btn btn-outline btn-sm" onclick="reinstateStaff(${s.id},'${escHtml(s.name)}')">復職</button></td>
-  </tr>`).join('');
+  resignedStaffList = ok ? data : [];
+  populateDeptSelect('rs-dept', resignedStaffList);
+  renderResignedStaff();
 }
 
 function openTerminateModal(staffId, staffName) {
@@ -4163,29 +4197,8 @@ async function submitManualPunch() {
 async function loadPunchStaff() {
   const { ok, data } = await api('/api/punch/staff', {}, true);
   punchStaffList = ok ? data : [];
-  const tb = document.getElementById('punch-staff-tbody');
-  document.getElementById('punch-staff-count').textContent = `共 ${punchStaffList.length} 位員工`;
-  if (!punchStaffList.length) { tb.innerHTML = '<tr><td colspan="8" class="empty-state"><div class="empty-state-text">尚無員工</div></td></tr>'; return; }
-  tb.innerHTML = punchStaffList.map(s => {
-    const dept = [s.department, s.role].filter(Boolean).join(' / ') || '—';
-    const bankInfo = s.bank_account
-      ? `<span style="font-family:'DM Mono',monospace;font-size:11px">${escHtml(s.bank_name||'')} ${escHtml(s.bank_account)}</span>`
-      : '<span style="color:var(--muted);font-size:12px">未設定</span>';
-    return `<tr draggable="true" data-id="${s.id}" style="cursor:default">
-    <td style="cursor:grab;text-align:center;color:var(--muted);font-size:16px;user-select:none" class="drag-handle" title="拖曳排序">⠿</td>
-    <td style="font-weight:600">${escHtml(s.name)}</td>
-    <td style="font-family:'DM Mono',monospace;font-size:12px;color:var(--muted)">${escHtml(s.employee_code||'—')}</td>
-    <td style="color:var(--muted);font-size:13px">${escHtml(dept)}</td>
-    <td style="font-family:'DM Mono',monospace;font-size:12px">${escHtml(s.username||'—')}</td>
-    <td>${bankInfo}</td>
-    <td>${s.active ? '<span class="badge badge-ok">在職</span>' : '<span class="badge badge-warn">停用</span>'}</td>
-    <td style="white-space:nowrap">
-      <button class="btn btn-outline btn-sm" onclick="openPunchStaffModal(${s.id})">編輯</button>
-      <button class="btn btn-ghost btn-sm" style="margin-left:4px" onclick="openTerminateModal(${s.id},'${escHtml(s.name)}')" title="辦理離職">離職</button>
-      <button class="btn btn-danger btn-sm" onclick="deletePunchStaff(${s.id})" style="margin-left:4px">刪除</button>
-    </td>
-  </tr>`;
-  }).join('');
+  populateDeptSelect('ps-dept', punchStaffList);
+  renderPunchStaff();
   initStaffDragSort();
 }
 function initStaffDragSort() {
@@ -4450,7 +4463,10 @@ const PREQ_COLOR = {pending:'var(--orange)', approved:'var(--green)', rejected:'
 
 async function loadPunchRequests() {
   const status = document.getElementById('preq-filter-status').value;
-  let url = '/api/punch/requests?'; if (status) url += `status=${status}`;
+  const month  = document.getElementById('preq-filter-month')?.value || '';
+  let url = '/api/punch/requests?';
+  if (status) url += `status=${status}`;
+  if (month)  url += `${status?'&':''}month=${month}`;
   const { ok, data } = await api(url, {}, true);
   punchReqList = ok ? data : [];
   document.getElementById('preq-count').textContent = `共 ${punchReqList.length} 筆`;
@@ -5011,17 +5027,7 @@ async function deleteShiftAssign() {
 async function loadShiftTypes() {
   const { ok, data } = await api('/api/shifts/types', {}, true);
   shiftTypes = ok ? data : [];
-  const tb   = document.getElementById('shift-types-tbody');
-  if (!shiftTypes.length) { tb.innerHTML = '<tr><td colspan="7" class="empty-state"><div class="empty-state-text">尚無班別</div></td></tr>'; return; }
-  tb.innerHTML = shiftTypes.map(t => `<tr style="opacity:${t.active?1:.5}">
-    <td style="font-weight:600"><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:${t.color};margin-right:6px;vertical-align:middle"></span>${escHtml(t.name)}</td>
-    <td style="font-family:'DM Mono',monospace;font-weight:600;color:var(--green)">${t.start_time}</td>
-    <td style="font-family:'DM Mono',monospace;font-weight:600;color:var(--red)">${t.end_time}</td>
-    <td style="color:var(--muted)">${escHtml(t.departments||'—')}</td>
-    <td><div style="width:24px;height:24px;border-radius:4px;background:${t.color};border:1px solid var(--border)"></div></td>
-    <td>${t.active ? '<span class="badge badge-ok">啟用</span>' : '<span class="badge badge-warn">停用</span>'}</td>
-    <td style="white-space:nowrap"><button class="btn btn-outline btn-sm" onclick="openShiftTypeModal(${t.id})">編輯</button><button class="btn btn-danger btn-sm" onclick="deleteShiftType(${t.id})" style="margin-left:4px">刪除</button></td>
-  </tr>`).join('');
+  renderShiftTypes();
 }
 function openShiftTypeModal(id=null) {
   shiftEditTypeId = id; document.getElementById('stm-title').textContent = id ? '編輯班別' : '新增班別';
@@ -5679,18 +5685,7 @@ async function editLeaveBalance(id, total, used) {
 async function loadLeaveTypes() {
   const {ok,data} = await api('/api/leave/types',{},true);
   leaveTypesList = ok?data:[];
-  const tb = document.getElementById('leave-types-tbody');
-  if (!leaveTypesList.length) { tb.innerHTML='<tr><td colspan="7" class="empty-state"><div class="empty-state-text">尚無假別</div></td></tr>'; return; }
-  const PAY_LABEL = {0:'無薪（事假）',0.5:'半薪（病假）',1:'全薪'};
-  tb.innerHTML = leaveTypesList.map(t=>`<tr style="opacity:${t.active?1:.5}">
-    <td style="font-weight:600"><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${t.color};margin-right:6px;vertical-align:middle"></span>${escHtml(t.name)}</td>
-    <td style="font-family:'DM Mono',monospace;font-size:12px;color:var(--muted)">${escHtml(t.code)}</td>
-    <td>${PAY_LABEL[t.pay_rate]||t.pay_rate+'倍'}</td>
-    <td style="font-family:'DM Mono',monospace">${t.max_days!=null?t.max_days+'天':'無限制'}</td>
-    <td><div style="width:20px;height:20px;border-radius:4px;background:${t.color}"></div></td>
-    <td>${t.active?'<span class="badge badge-ok">啟用</span>':'<span class="badge badge-warn">停用</span>'}</td>
-    <td style="white-space:nowrap"><button class="btn btn-outline btn-sm" onclick="openLeaveTypeModal(${t.id})">編輯</button><button class="btn btn-danger btn-sm" onclick="deleteLeaveType(${t.id})" style="margin-left:4px">刪除</button></td>
-  </tr>`).join('');
+  renderLeaveTypes();
 }
 function openLeaveTypeModal(id=null) {
   document.getElementById('ltm-title').textContent = id?'編輯假別':'新增假別';
@@ -5764,52 +5759,8 @@ async function loadSalaryRecords() {
   const month = document.getElementById('sal-month').value; if (!month) return;
   const {ok,data} = await api(`/api/salary/records?month=${month}`,{},true);
   salaryRecords = ok?data:[];
-  document.getElementById('sal-count').textContent=`共 ${salaryRecords.length} 筆 | 已確認 ${salaryRecords.filter(r=>r.status==='confirmed').length} 筆`;
-  const tb = document.getElementById('sal-tbody');
-  if (!salaryRecords.length) {
-    tb.innerHTML='<tr><td colspan="8" class="empty-state"><div class="empty-state-text">尚無薪資記錄，請點「自動產生薪資」</div></td></tr>';
-    document.getElementById('sal-total-row').style.display='none'; return;
-  }
-  let totAllow=0,totDeduct=0,totNet=0;
-  const hasDraft = salaryRecords.some(r=>r.status==='draft');
-  const hasConfirmed = salaryRecords.some(r=>r.status==='confirmed');
-  document.getElementById('sal-confirm-all-btn').style.display = hasDraft ? '' : 'none';
-  document.getElementById('sal-bulk-print-btn').style.display  = hasConfirmed ? '' : 'none';
-  tb.innerHTML = salaryRecords.map(r=>{
-    totAllow  += r.allowance_total||0;
-    totDeduct += r.deduction_total||0;
-    totNet    += r.net_pay||0;
-    const sc = r.status==='confirmed'?'var(--green)':'var(--muted)';
-    const sl = r.status==='confirmed'?'已確認':'草稿';
-    // 出勤異常偵測
-    const unaccounted = Math.max(0, (r.work_days||0) - (r.actual_days||0) - (r.leave_days||0));
-    let anomalyBadge = '';
-    if (r.salary_type==='hourly') {
-      anomalyBadge = `<div style="font-family:'DM Mono',monospace;font-size:12px">${r.actual_work_hours||0}h</div>`;
-    } else {
-      anomalyBadge = `<div style="font-size:12px">出勤 <strong>${r.actual_days||0}</strong>/${r.work_days||0}天`;
-      if (r.leave_days>0) anomalyBadge += `<span style="color:var(--accent);margin-left:4px">假${r.leave_days}天</span>`;
-      anomalyBadge += '</div>';
-    }
-    return `<tr${unaccounted>0?' style="background:rgba(214,66,66,0.04)"':''}>
-      <td style="font-family:'DM Mono',monospace;font-size:12px;color:var(--muted)">${escHtml(r.employee_code||'')}</td>
-      <td style="font-weight:600">${escHtml(r.staff_name)}<span style="font-size:10px;color:var(--muted);margin-left:6px">${r.salary_type==='hourly'?'時薪':'月薪'}</span></td>
-      <td style="color:var(--muted)">${escHtml(r.department||'')}</td>
-      <td>${anomalyBadge}</td>
-      <td style="font-family:'DM Mono',monospace;color:var(--green)">$${fmtNum(r.allowance_total)}</td>
-      <td style="font-family:'DM Mono',monospace;color:var(--red)">-$${fmtNum(r.deduction_total)}</td>
-      <td style="font-family:'DM Mono',monospace;font-weight:700;color:var(--navy)">$${fmtNum(r.net_pay)}</td>
-      <td><span style="font-size:12px;font-weight:700;color:${sc}">${sl}</span></td>
-      <td style="white-space:nowrap">
-        <button class="btn btn-outline btn-sm" onclick="openSalDetail(${r.id})">明細</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteSalRecord(${r.id})" style="margin-left:4px">刪除</button>
-      </td>
-    </tr>`;
-  }).join('');
-  document.getElementById('sal-total-row').style.display='';
-  document.getElementById('sal-total-allow').textContent  = `津貼：$${fmtNum(totAllow)}`;
-  document.getElementById('sal-total-deduct').textContent = `扣除：-$${fmtNum(totDeduct)}`;
-  document.getElementById('sal-total-net').textContent    = `實領：$${fmtNum(totNet)}`;
+  populateDeptSelect('sal-filter-dept', salaryRecords, 'department');
+  renderSalaryTable();
 }
 
 async function generateSalary(force=false) {
@@ -6165,21 +6116,8 @@ async function saveSalaryCalcSetting(key, value) {
 async function loadSalaryStaff() {
   const {ok,data} = await api('/api/salary/staff',{},true);
   salaryStaffList = ok?data:[];
-  document.getElementById('sal-staff-count').textContent = `共 ${salaryStaffList.length} 位員工（來自打卡系統）`;
-  const tb = document.getElementById('sal-staff-tbody');
-  if (!salaryStaffList.length) { tb.innerHTML='<tr><td colspan="10" class="empty-state"><div class="empty-state-text">尚無員工</div></td></tr>'; return; }
-  tb.innerHTML = salaryStaffList.map(s=>`<tr>
-    <td style="font-weight:600">${escHtml(s.name)}</td>
-    <td style="font-family:'DM Mono',monospace;font-size:12px;color:var(--muted)">${escHtml(s.username||'')}</td>
-    <td style="color:var(--muted)">${escHtml(s.department||'—')}</td>
-    <td style="color:var(--muted)">${escHtml(s.position_title||'—')}</td>
-    <td style="font-family:'DM Mono',monospace;font-size:12px">${s.hire_date||'—'}</td>
-    <td style="font-family:'DM Mono',monospace;font-weight:600;color:var(--navy)">$${fmtNum(s.base_salary)}</td>
-    <td style="font-family:'DM Mono',monospace;color:var(--muted)">$${fmtNum(s.insured_salary)}</td>
-    <td style="color:var(--muted)">${s.vacation_quota!=null?s.vacation_quota+'天':'預設'}</td>
-    <td>${s.active?'<span class="badge badge-ok">在職</span>':'<span class="badge badge-warn">停用</span>'}</td>
-    <td><button class="btn btn-outline btn-sm" onclick="openSalStaffModal(${s.id})">設定薪資</button></td>
-  </tr>`).join('');
+  populateDeptSelect('ss-dept', salaryStaffList);
+  renderSalaryStaff();
 }
 
 function openSalStaffModal(id) {
@@ -6323,25 +6261,7 @@ async function saveSalStaff() {
 async function loadSalaryItems() {
   const {ok,data} = await api('/api/salary/items',{},true);
   salaryItemsList = ok?data:[];
-  const allowDiv  = document.getElementById('sal-items-allow');
-  const deductDiv = document.getElementById('sal-items-deduct');
-  const card = (it) => `<div class="card" style="margin-bottom:10px">
-    <div class="card-header" style="flex-wrap:wrap;gap:8px;padding:12px 16px">
-      <div style="flex:1;min-width:0">
-        <span style="font-size:14px;font-weight:700"><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${it.color};margin-right:6px;vertical-align:middle"></span>${escHtml(it.name)}</span>
-        <div style="font-size:11px;color:var(--muted);margin-top:3px;font-family:'DM Mono',monospace">
-          ${it.formula?'公式計算 '+escHtml(it.formula):`固定金額 $${fmtNum(it.amount)}`}
-        </div>
-      </div>
-      <div style="display:flex;gap:6px;align-items:center">
-        ${it.code?`<code style="font-size:11px;background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:2px 8px;color:var(--accent);font-family:'DM Mono',monospace;white-space:nowrap">${escHtml(it.code)}</code>`:''}
-        <button class="btn btn-outline btn-sm" onclick="openSalaryItemModal(${it.id})">編輯</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteSalaryItem(${it.id})">刪除</button>
-      </div>
-    </div>
-  </div>`;
-  allowDiv.innerHTML  = salaryItemsList.filter(i=>i.item_type==='allowance').map(card).join('') || '<div style="color:var(--muted);padding:20px;text-align:center">尚無津貼項目</div>';
-  deductDiv.innerHTML = salaryItemsList.filter(i=>i.item_type==='deduction').map(card).join('') || '<div style="color:var(--muted);padding:20px;text-align:center">尚無扣除項目</div>';
+  renderSalaryItems();
 }
 
 function openSalaryItemModal(id=null) {
@@ -6907,6 +6827,13 @@ async function loadFinRecords() {
     document.getElementById('fin-rec-footer').style.display = 'none'; return;
   }
   window._finRecords = data;
+  // 填類別 filter 選單
+  const catSel = document.getElementById('fin-rec-cat');
+  if (catSel) {
+    const cats = [...new Map(data.filter(r=>r.category_id).map(r=>[r.category_id,{id:r.category_id,name:r.category_name||''}])).values()].sort((a,b)=>a.name.localeCompare(b.name));
+    catSel.innerHTML = '<option value="">全部類別</option>' + cats.map(c=>`<option value="${c.id}">${escHtml(c.name)}</option>`).join('');
+  }
+  filterFinRecords();
   let totalIncome=0, totalExpense=0;
   tb.innerHTML = data.map(r => {
     if (r.type==='income') totalIncome+=r.amount; else totalExpense+=r.amount;
@@ -8410,32 +8337,7 @@ let adminAccList = [];
 async function loadAdminAccounts() {
   const { ok, data } = await api('/api/admin/accounts', {}, true);
   adminAccList = ok ? data : [];
-  const tb = document.getElementById('adminacc-tbody');
-  if (!adminAccList.length) {
-    tb.innerHTML = '<tr><td colspan="7" class="empty-state"><div class="empty-state-text">尚無帳號</div></td></tr>'; return;
-  }
-  tb.innerHTML = adminAccList.map(a => {
-    const modLabels = a.is_super
-      ? '<span style="color:var(--green);font-size:12px">全部模組</span>'
-      : (a.permissions||[]).map(m => {
-          const mod = ALL_MODULES.find(x=>x.key===m);
-          return mod ? `<span style="font-size:11px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 6px">${mod.label}</span>` : '';
-        }).join(' ') || '<span style="color:var(--muted);font-size:12px">無</span>';
-    const typeLabel = a.is_super
-      ? '<span class="badge" style="background:rgba(74,123,218,0.15);color:var(--accent)">超級管理員</span>'
-      : '<span class="badge badge-ok" style="opacity:.7">一般管理員</span>';
-    const lastLogin = a.last_login_at ? new Date(a.last_login_at).toLocaleString('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
-    return `<tr>
-      <td style="font-family:'DM Mono',monospace;font-weight:600">${escHtml(a.username)}</td>
-      <td>${escHtml(a.display_name||'')}</td>
-      <td style="line-height:1.8">${modLabels}</td>
-      <td>${typeLabel}</td>
-      <td style="font-size:12px;color:var(--muted)">${lastLogin}</td>
-      <td>${a.active ? '<span class="badge badge-ok">啟用</span>' : '<span class="badge badge-warn">停用</span>'}</td>
-      <td><button class="btn btn-outline btn-sm" onclick="openAdminAccModal(${a.id})">編輯</button>
-          <button class="btn btn-danger btn-sm" onclick="deleteAdminAcc(${a.id},'${escHtml(a.username)}')" style="margin-left:4px">刪除</button></td>
-    </tr>`;
-  }).join('');
+  renderAdminAccounts();
 }
 function openAdminAccModal(id=null) {
   document.getElementById('aam-id').value = id||'';
@@ -8521,32 +8423,15 @@ async function loadExpenseReview() {
   const {ok, data} = await api(`/api/expense/claims${qs}`, {}, true);
   const claims = Array.isArray(data) ? data : [];
   if (!ok || !claims.length) {
+    _expenseReviewList = [];
     tbody.innerHTML = '<tr><td colspan="8" class="empty-state"><div class="empty-state-text">無資料</div></td></tr>';
     setBadge('badge-expense-review', 0);
     return;
   }
-  const statusMap   = { pending:'待審核', approved:'已核准', rejected:'已拒絕' };
-  const statusColor = { pending:'var(--accent)', approved:'var(--green)', rejected:'var(--red)' };
-  tbody.innerHTML = claims.map(c => `
-    <tr>
-      <td>${esc(c.staff_name||'—')}</td>
-      <td style="font-family:'DM Mono',monospace;font-size:12px">${c.expense_date}</td>
-      <td>${esc(c.category)}</td>
-      <td style="font-family:'DM Mono',monospace;text-align:right">NT$ ${fmtNum(c.amount)}</td>
-      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.note||'—')}</td>
-      <td style="text-align:center">${c.document_id ? `<span style="color:var(--accent);font-size:12px">有附件</span>` : '—'}</td>
-      <td><span style="color:${statusColor[c.status]||'var(--muted)'};font-size:12px;font-weight:600">${statusMap[c.status]||c.status}</span></td>
-      <td>
-        ${c.status === 'pending' ? `
-          <button class="btn btn-sm btn-success" onclick="reviewExpense(${c.id},'approve')">核准</button>
-          <button class="btn btn-sm" style="background:var(--red);color:#fff;margin-left:4px" onclick="promptRejectExpense(${c.id})">拒絕</button>
-        ` : '—'}
-      </td>
-    </tr>
-  `).join('');
-  // Badge: count pending
+  _expenseReviewList = claims;
   const pendingCnt = status === '' ? claims.filter(c=>c.status==='pending').length : (status==='pending' ? claims.length : 0);
   setBadge('badge-expense-review', pendingCnt);
+  filterExpenseReview();
 }
 
 async function reviewExpense(id, action, review_note='') {
@@ -9501,38 +9386,23 @@ async function loadTrainingStaffFilter() {
 }
 
 async function loadTrainingSummary() {
-  const tbody = document.getElementById('training-summary-tbody');
+  const tbody    = document.getElementById('training-summary-tbody');
   const alertBar = document.getElementById('training-alert-bar');
   tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><div class="empty-state-text">載入中...</div></td></tr>';
   const r = await api('/api/training/summary');
   if (!r.ok) { tbody.innerHTML = '<tr><td colspan="7" style="color:var(--red)">載入失敗</td></tr>'; return; }
-  const data = r.data;
-
-  // Show alert if any expiring soon / expired
-  const urgentCount = data.reduce((s, d) => s + d.expiring_soon + d.expired, 0);
+  trainingSummaryList = r.data;
+  const urgentCount = trainingSummaryList.reduce((s, d) => s + d.expiring_soon + d.expired, 0);
   if (urgentCount > 0) {
     alertBar.style.display = '';
-    const expiredCount  = data.reduce((s, d) => s + d.expired, 0);
-    const expiringCount = data.reduce((s, d) => s + d.expiring_soon, 0);
+    const expiredCount  = trainingSummaryList.reduce((s, d) => s + d.expired, 0);
+    const expiringCount = trainingSummaryList.reduce((s, d) => s + d.expiring_soon, 0);
     alertBar.innerHTML = `⚠️ 共有 <strong>${expiredCount}</strong> 筆證書已過期、<strong>${expiringCount}</strong> 筆 60 天內到期，請盡速安排補訓。`;
   } else {
     alertBar.style.display = 'none';
   }
-
-  if (!data.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><div class="empty-state-text">尚無員工資料</div></td></tr>'; return; }
-  tbody.innerHTML = data.map(d => `
-    <tr>
-      <td>${escHtml(d.name)}</td>
-      <td style="color:var(--muted)">${escHtml(d.department||'')}</td>
-      <td style="text-align:center">${d.total}</td>
-      <td style="text-align:center;color:var(--green)">${d.valid}</td>
-      <td style="text-align:center;color:var(--amber,#d97706)">${d.expiring_soon > 0 ? `<strong>${d.expiring_soon}</strong>` : 0}</td>
-      <td style="text-align:center;color:var(--red)">${d.expired > 0 ? `<strong>${d.expired}</strong>` : 0}</td>
-      <td>
-        <button class="btn btn-sm btn-outline" onclick="openTrainingModal(null,${d.id})">新增</button>
-        <button class="btn btn-sm" onclick="viewStaffTraining(${d.id},'${escHtml(d.name)}')">查看</button>
-      </td>
-    </tr>`).join('');
+  populateDeptSelect('trn-dept', trainingSummaryList);
+  renderTrainingSummary();
 }
 
 async function loadTrainingRecords() {
@@ -9869,6 +9739,359 @@ async function triggerLaborLawCheck() {
   } else {
     showToast('檢查觸發失敗', 'error');
   }
+}
+
+// ══════════════════════════════════════════════════════════════
+// Filter helper utilities
+// ══════════════════════════════════════════════════════════════
+function populateDeptSelect(selectId, items, key = 'department') {
+  const el = document.getElementById(selectId);
+  if (!el) return;
+  const cur = el.value;
+  const depts = [...new Set(items.map(i => i[key]).filter(Boolean))].sort();
+  el.innerHTML = '<option value="">全部部門</option>' +
+    depts.map(d => `<option value="${escHtml(d)}"${d===cur?' selected':''}>${escHtml(d)}</option>`).join('');
+}
+
+// ── 打卡管理 → 員工清單 ──────────────────────────────────────
+function renderPunchStaff() {
+  const q      = (document.getElementById('ps-search')?.value || '').toLowerCase();
+  const dept   = document.getElementById('ps-dept')?.value  || '';
+  const status = document.getElementById('ps-status')?.value;
+  const tb     = document.getElementById('punch-staff-tbody');
+  if (!tb) return;
+  let list = punchStaffList;
+  if (q)      list = list.filter(s => (s.name||'').toLowerCase().includes(q) || (s.employee_code||'').toLowerCase().includes(q));
+  if (dept)   list = list.filter(s => (s.department||'') === dept);
+  if (status !== '' && status != null) list = list.filter(s => String(s.active?1:0) === status);
+  document.getElementById('punch-staff-count').textContent = `共 ${list.length} 位員工`;
+  if (!list.length) { tb.innerHTML = '<tr><td colspan="8" class="empty-state"><div class="empty-state-text">無符合員工</div></td></tr>'; return; }
+  tb.innerHTML = list.map(s => {
+    const dept = [s.department, s.role].filter(Boolean).join(' / ') || '—';
+    const bankInfo = s.bank_account
+      ? `<span style="font-family:'DM Mono',monospace;font-size:11px">${escHtml(s.bank_name||'')} ${escHtml(s.bank_account)}</span>`
+      : '<span style="color:var(--muted);font-size:12px">未設定</span>';
+    return `<tr draggable="true" data-id="${s.id}" style="cursor:default">
+    <td style="cursor:grab;text-align:center;color:var(--muted);font-size:16px;user-select:none" class="drag-handle" title="拖曳排序">⠿</td>
+    <td style="font-weight:600">${escHtml(s.name)}</td>
+    <td style="font-family:'DM Mono',monospace;font-size:12px;color:var(--muted)">${escHtml(s.employee_code||'—')}</td>
+    <td style="color:var(--muted);font-size:13px">${escHtml(dept)}</td>
+    <td style="font-family:'DM Mono',monospace;font-size:12px">${escHtml(s.username||'—')}</td>
+    <td>${bankInfo}</td>
+    <td>${s.active ? '<span class="badge badge-ok">在職</span>' : '<span class="badge badge-warn">停用</span>'}</td>
+    <td style="white-space:nowrap">
+      <button class="btn btn-outline btn-sm" onclick="openPunchStaffModal(${s.id})">編輯</button>
+      <button class="btn btn-ghost btn-sm" style="margin-left:4px" onclick="openTerminateModal(${s.id},'${escHtml(s.name)}')" title="辦理離職">離職</button>
+      <button class="btn btn-danger btn-sm" onclick="deletePunchStaff(${s.id})" style="margin-left:4px">刪除</button>
+    </td>
+  </tr>`;
+  }).join('');
+}
+
+// ── 打卡管理 → 離職員工 ──────────────────────────────────────
+let resignedStaffList = [];
+function renderResignedStaff() {
+  const q    = (document.getElementById('rs-search')?.value || '').toLowerCase();
+  const dept = document.getElementById('rs-dept')?.value || '';
+  const tb   = document.getElementById('resigned-tbody');
+  if (!tb) return;
+  let list = resignedStaffList;
+  if (q)    list = list.filter(s => (s.name||'').toLowerCase().includes(q) || (s.employee_code||'').toLowerCase().includes(q));
+  if (dept) list = list.filter(s => (s.department||'') === dept);
+  if (!list.length) { tb.innerHTML = '<tr><td colspan="8" class="empty-state"><div class="empty-state-text">無符合記錄</div></td></tr>'; return; }
+  tb.innerHTML = list.map(s => `<tr>
+    <td style="font-weight:600">${escHtml(s.name)}</td>
+    <td style="color:var(--muted)">${escHtml(s.employee_code||'')}</td>
+    <td>${escHtml(s.department||'')}</td>
+    <td>${escHtml(s.role||'')}</td>
+    <td style="font-family:'DM Mono',monospace">${s.hire_date||'—'}</td>
+    <td style="font-family:'DM Mono',monospace;color:var(--red)">${s.termination_date||'—'}</td>
+    <td style="font-size:12px;color:var(--muted)">${escHtml(s.termination_reason||'')}</td>
+    <td><button class="btn btn-outline btn-sm" onclick="reinstateStaff(${s.id},'${escHtml(s.name)}')">復職</button></td>
+  </tr>`).join('');
+}
+
+// ── 排班管理 → 班別設定 ──────────────────────────────────────
+function renderShiftTypes() {
+  const q      = (document.getElementById('st-search')?.value || '').toLowerCase();
+  const status = document.getElementById('st-status')?.value;
+  const tb     = document.getElementById('shift-types-tbody');
+  if (!tb) return;
+  let list = shiftTypes;
+  if (q)      list = list.filter(t => (t.name||'').toLowerCase().includes(q) || (t.departments||'').toLowerCase().includes(q));
+  if (status !== '' && status != null) list = list.filter(t => String(t.active?1:0) === status);
+  if (!list.length) { tb.innerHTML = '<tr><td colspan="7" class="empty-state"><div class="empty-state-text">無符合班別</div></td></tr>'; return; }
+  tb.innerHTML = list.map(t => `<tr style="opacity:${t.active?1:.5}">
+    <td style="font-weight:600"><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:${t.color};margin-right:6px;vertical-align:middle"></span>${escHtml(t.name)}</td>
+    <td style="font-family:'DM Mono',monospace;font-weight:600;color:var(--green)">${t.start_time}</td>
+    <td style="font-family:'DM Mono',monospace;font-weight:600;color:var(--red)">${t.end_time}</td>
+    <td style="color:var(--muted)">${escHtml(t.departments||'—')}</td>
+    <td><div style="width:24px;height:24px;border-radius:4px;background:${t.color};border:1px solid var(--border)"></div></td>
+    <td>${t.active ? '<span class="badge badge-ok">啟用</span>' : '<span class="badge badge-warn">停用</span>'}</td>
+    <td style="white-space:nowrap"><button class="btn btn-outline btn-sm" onclick="openShiftTypeModal(${t.id})">編輯</button><button class="btn btn-danger btn-sm" onclick="deleteShiftType(${t.id})" style="margin-left:4px">刪除</button></td>
+  </tr>`).join('');
+}
+
+// ── 請假管理 → 假別設定 ──────────────────────────────────────
+function renderLeaveTypes() {
+  const q      = (document.getElementById('lt-search')?.value || '').toLowerCase();
+  const status = document.getElementById('lt-status')?.value;
+  const tb     = document.getElementById('leave-types-tbody');
+  if (!tb) return;
+  const PAY_LABEL = {0:'無薪（事假）',0.5:'半薪（病假）',1:'全薪'};
+  let list = leaveTypesList;
+  if (q)      list = list.filter(t => (t.name||'').toLowerCase().includes(q) || (t.code||'').toLowerCase().includes(q));
+  if (status !== '' && status != null) list = list.filter(t => String(t.active?1:0) === status);
+  if (!list.length) { tb.innerHTML = '<tr><td colspan="7" class="empty-state"><div class="empty-state-text">無符合假別</div></td></tr>'; return; }
+  tb.innerHTML = list.map(t => `<tr style="opacity:${t.active?1:.5}">
+    <td style="font-weight:600"><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${t.color};margin-right:6px;vertical-align:middle"></span>${escHtml(t.name)}</td>
+    <td style="font-family:'DM Mono',monospace;font-size:12px;color:var(--muted)">${escHtml(t.code)}</td>
+    <td>${PAY_LABEL[t.pay_rate]||t.pay_rate+'倍'}</td>
+    <td style="font-family:'DM Mono',monospace">${t.max_days!=null?t.max_days+'天':'無限制'}</td>
+    <td><div style="width:20px;height:20px;border-radius:4px;background:${t.color}"></div></td>
+    <td>${t.active?'<span class="badge badge-ok">啟用</span>':'<span class="badge badge-warn">停用</span>'}</td>
+    <td style="white-space:nowrap"><button class="btn btn-outline btn-sm" onclick="openLeaveTypeModal(${t.id})">編輯</button><button class="btn btn-danger btn-sm" onclick="deleteLeaveType(${t.id})" style="margin-left:4px">刪除</button></td>
+  </tr>`).join('');
+}
+
+// ── 薪資管理 → 月薪計算表 ────────────────────────────────────
+function renderSalaryTable() {
+  const dept   = document.getElementById('sal-filter-dept')?.value   || '';
+  const status = document.getElementById('sal-filter-status')?.value || '';
+  const tb     = document.getElementById('sal-tbody');
+  if (!tb) return;
+  let list = salaryRecords;
+  if (dept)   list = list.filter(r => (r.department||'') === dept);
+  if (status) list = list.filter(r => r.status === status);
+  if (!list.length) {
+    tb.innerHTML = '<tr><td colspan="9" class="empty-state"><div class="empty-state-text">無符合記錄</div></td></tr>';
+    document.getElementById('sal-total-row').style.display = 'none'; return;
+  }
+  let totAllow=0, totDeduct=0, totNet=0;
+  const hasDraft     = list.some(r=>r.status==='draft');
+  const hasConfirmed = list.some(r=>r.status==='confirmed');
+  document.getElementById('sal-confirm-all-btn').style.display = hasDraft     ? '' : 'none';
+  document.getElementById('sal-bulk-print-btn').style.display  = hasConfirmed ? '' : 'none';
+  tb.innerHTML = list.map(r => {
+    totAllow  += r.allowance_total||0;
+    totDeduct += r.deduction_total||0;
+    totNet    += r.net_pay||0;
+    const sc = r.status==='confirmed'?'var(--green)':'var(--muted)';
+    const sl = r.status==='confirmed'?'已確認':'草稿';
+    const unaccounted = Math.max(0,(r.work_days||0)-(r.actual_days||0)-(r.leave_days||0));
+    let anomalyBadge = '';
+    if (r.salary_type==='hourly') {
+      anomalyBadge = `<div style="font-family:'DM Mono',monospace;font-size:12px">${r.actual_work_hours||0}h</div>`;
+    } else {
+      anomalyBadge = `<div style="font-size:12px">出勤 <strong>${r.actual_days||0}</strong>/${r.work_days||0}天`;
+      if (r.leave_days>0) anomalyBadge += `<span style="color:var(--accent);margin-left:4px">假${r.leave_days}天</span>`;
+      anomalyBadge += '</div>';
+    }
+    return `<tr${unaccounted>0?' style="background:rgba(214,66,66,0.04)"':''}>
+      <td style="font-family:'DM Mono',monospace;font-size:12px;color:var(--muted)">${escHtml(r.employee_code||'')}</td>
+      <td style="font-weight:600">${escHtml(r.staff_name)}<span style="font-size:10px;color:var(--muted);margin-left:6px">${r.salary_type==='hourly'?'時薪':'月薪'}</span></td>
+      <td style="color:var(--muted)">${escHtml(r.department||'')}</td>
+      <td>${anomalyBadge}</td>
+      <td style="font-family:'DM Mono',monospace;color:var(--green)">$${fmtNum(r.allowance_total)}</td>
+      <td style="font-family:'DM Mono',monospace;color:var(--red)">-$${fmtNum(r.deduction_total)}</td>
+      <td style="font-family:'DM Mono',monospace;font-weight:700;color:var(--navy)">$${fmtNum(r.net_pay)}</td>
+      <td><span style="font-size:12px;font-weight:700;color:${sc}">${sl}</span></td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-outline btn-sm" onclick="openSalDetail(${r.id})">明細</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteSalRecord(${r.id})" style="margin-left:4px">刪除</button>
+      </td>
+    </tr>`;
+  }).join('');
+  document.getElementById('sal-total-row').style.display = '';
+  document.getElementById('sal-total-allow').textContent  = `津貼：$${fmtNum(totAllow)}`;
+  document.getElementById('sal-total-deduct').textContent = `扣除：-$${fmtNum(totDeduct)}`;
+  document.getElementById('sal-total-net').textContent    = `實領：$${fmtNum(totNet)}`;
+  document.getElementById('sal-count').textContent = `共 ${list.length} 筆 | 已確認 ${list.filter(r=>r.status==='confirmed').length} 筆`;
+}
+
+// ── 薪資管理 → 薪資設定員工清單 ─────────────────────────────
+function renderSalaryStaff() {
+  const q      = (document.getElementById('ss-search')?.value || '').toLowerCase();
+  const dept   = document.getElementById('ss-dept')?.value   || '';
+  const status = document.getElementById('ss-status')?.value;
+  const tb     = document.getElementById('sal-staff-tbody');
+  if (!tb) return;
+  let list = salaryStaffList;
+  if (q)      list = list.filter(s => (s.name||'').toLowerCase().includes(q));
+  if (dept)   list = list.filter(s => (s.department||'') === dept);
+  if (status !== '' && status != null) list = list.filter(s => String(s.active?1:0) === status);
+  document.getElementById('sal-staff-count').textContent = `共 ${list.length} 位員工（來自打卡系統）`;
+  if (!list.length) { tb.innerHTML = '<tr><td colspan="10" class="empty-state"><div class="empty-state-text">無符合員工</div></td></tr>'; return; }
+  tb.innerHTML = list.map(s => `<tr>
+    <td style="font-weight:600">${escHtml(s.name)}</td>
+    <td style="font-family:'DM Mono',monospace;font-size:12px;color:var(--muted)">${escHtml(s.username||'')}</td>
+    <td style="color:var(--muted)">${escHtml(s.department||'—')}</td>
+    <td style="color:var(--muted)">${escHtml(s.position_title||'—')}</td>
+    <td style="font-family:'DM Mono',monospace;font-size:12px">${s.hire_date||'—'}</td>
+    <td style="font-family:'DM Mono',monospace;font-weight:600;color:var(--navy)">$${fmtNum(s.base_salary)}</td>
+    <td style="font-family:'DM Mono',monospace;color:var(--muted)">$${fmtNum(s.insured_salary)}</td>
+    <td style="color:var(--muted)">${s.vacation_quota!=null?s.vacation_quota+'天':'預設'}</td>
+    <td>${s.active?'<span class="badge badge-ok">在職</span>':'<span class="badge badge-warn">停用</span>'}</td>
+    <td><button class="btn btn-outline btn-sm" onclick="openSalStaffModal(${s.id})">設定薪資</button></td>
+  </tr>`).join('');
+}
+
+// ── 薪資管理 → 薪資項目 ──────────────────────────────────────
+function renderSalaryItems() {
+  const q        = (document.getElementById('si-search')?.value || '').toLowerCase();
+  const allowDiv = document.getElementById('sal-items-allow');
+  const deductDiv= document.getElementById('sal-items-deduct');
+  if (!allowDiv) return;
+  const card = (it) => `<div class="card" style="margin-bottom:10px">
+    <div class="card-header" style="flex-wrap:wrap;gap:8px;padding:12px 16px">
+      <div style="flex:1;min-width:0">
+        <span style="font-size:14px;font-weight:700"><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${it.color};margin-right:6px;vertical-align:middle"></span>${escHtml(it.name)}</span>
+        <div style="font-size:11px;color:var(--muted);margin-top:3px;font-family:'DM Mono',monospace">
+          ${it.formula?'公式計算 '+escHtml(it.formula):`固定金額 $${fmtNum(it.amount)}`}
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        ${it.code?`<code style="font-size:11px;background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:2px 8px;color:var(--accent);font-family:'DM Mono',monospace;white-space:nowrap">${escHtml(it.code)}</code>`:''}
+        <button class="btn btn-outline btn-sm" onclick="openSalaryItemModal(${it.id})">編輯</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteSalaryItem(${it.id})">刪除</button>
+      </div>
+    </div>
+  </div>`;
+  let list = salaryItemsList;
+  if (q) list = list.filter(it => (it.name||'').toLowerCase().includes(q) || (it.code||'').toLowerCase().includes(q));
+  const allow  = list.filter(i=>i.item_type==='allowance');
+  const deduct = list.filter(i=>i.item_type==='deduction');
+  allowDiv.innerHTML  = allow.length  ? allow.map(card).join('')  : '<div style="color:var(--muted);padding:20px;text-align:center">尚無津貼項目</div>';
+  deductDiv.innerHTML = deduct.length ? deduct.map(card).join('') : '<div style="color:var(--muted);padding:20px;text-align:center">尚無扣除項目</div>';
+}
+
+// ── 財務管理 → 收支記錄 client-side filter ───────────────────
+function filterFinRecords() {
+  const catId  = document.getElementById('fin-rec-cat')?.value    || '';
+  const q      = (document.getElementById('fin-rec-search')?.value || '').toLowerCase();
+  const tb     = document.getElementById('fin-rec-tbody');
+  if (!tb || !window._finRecords) return;
+  let list = window._finRecords;
+  if (catId) list = list.filter(r => String(r.category_id) === catId);
+  if (q)     list = list.filter(r => (r.title||'').toLowerCase().includes(q) || (r.vendor||'').toLowerCase().includes(q));
+  if (!list.length) { tb.innerHTML = '<tr><td colspan="9" class="empty-state"><div class="empty-state-text">無符合記錄</div></td></tr>'; return; }
+  let totalIncome=0, totalExpense=0;
+  tb.innerHTML = list.map(r => {
+    if (r.type==='income') totalIncome+=r.amount; else totalExpense+=r.amount;
+    const typeBadge = r.type==='income'
+      ? '<span class="badge badge-ok">收入</span>'
+      : '<span class="badge" style="background:rgba(214,66,66,0.12);color:var(--red)">支出</span>';
+    const catDot = r.category_color ? `<span style="width:8px;height:8px;border-radius:2px;background:${r.category_color};display:inline-block;margin-right:4px"></span>` : '';
+    const ocrBadge = r.document_id ? `<button class="btn btn-sm" style="margin-left:4px;background:rgba(74,123,218,0.12);color:var(--accent);border:none;font-size:11px;padding:2px 7px" onclick="openOcrRawModal(${r.id})">OCR</button>` : '';
+    return `<tr>
+      <td style="font-family:'DM Mono',monospace;font-size:12px">${r.record_date}</td>
+      <td>${typeBadge}${ocrBadge}</td>
+      <td>${catDot}${escHtml(r.category_name||'—')}</td>
+      <td style="font-weight:600">${escHtml(r.title)}</td>
+      <td style="color:var(--muted);font-size:12px">${escHtml(r.vendor||'')}</td>
+      <td style="color:var(--muted);font-size:12px">${escHtml(r.invoice_no||'')}</td>
+      <td style="text-align:right;font-family:'DM Mono',monospace;font-weight:600;color:${r.type==='income'?'var(--green)':'var(--red)'}">$${r.amount.toLocaleString()}</td>
+      <td style="color:var(--muted);font-size:12px">${escHtml(r.note||'')}</td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-outline btn-sm" onclick="openFinRecModal(${r.id})">編輯</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteFinRec(${r.id})" style="margin-left:4px">刪除</button>
+      </td>
+    </tr>`;
+  }).join('');
+  const footer = document.getElementById('fin-rec-footer');
+  if (footer) { footer.style.display=''; footer.textContent = `收入合計：$${totalIncome.toLocaleString()}　支出合計：$${totalExpense.toLocaleString()}　淨額：$${(totalIncome-totalExpense).toLocaleString()}`; }
+}
+
+// ── 帳號管理 ─────────────────────────────────────────────────
+function renderAdminAccounts() {
+  const q      = (document.getElementById('adm-search')?.value || '').toLowerCase();
+  const status = document.getElementById('adm-status')?.value;
+  const tb     = document.getElementById('adminacc-tbody');
+  if (!tb) return;
+  let list = adminAccList;
+  if (q)      list = list.filter(a => (a.username||'').toLowerCase().includes(q) || (a.display_name||'').toLowerCase().includes(q));
+  if (status !== '' && status != null) list = list.filter(a => String(a.active?1:0) === status);
+  if (!list.length) { tb.innerHTML = '<tr><td colspan="7" class="empty-state"><div class="empty-state-text">無符合帳號</div></td></tr>'; return; }
+  tb.innerHTML = list.map(a => {
+    const modLabels = a.is_super
+      ? '<span style="color:var(--green);font-size:12px">全部模組</span>'
+      : (a.permissions||[]).map(m => {
+          const mod = ALL_MODULES.find(x=>x.key===m);
+          return mod ? `<span style="font-size:11px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 6px">${mod.label}</span>` : '';
+        }).join(' ') || '<span style="color:var(--muted);font-size:12px">無</span>';
+    const typeLabel = a.is_super
+      ? '<span class="badge" style="background:rgba(74,123,218,0.15);color:var(--accent)">超級管理員</span>'
+      : '<span class="badge badge-ok" style="opacity:.7">一般管理員</span>';
+    const lastLogin = a.last_login_at ? new Date(a.last_login_at).toLocaleString('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+    return `<tr>
+      <td style="font-family:'DM Mono',monospace;font-weight:600">${escHtml(a.username)}</td>
+      <td>${escHtml(a.display_name||'')}</td>
+      <td style="line-height:1.8">${modLabels}</td>
+      <td>${typeLabel}</td>
+      <td style="font-size:12px;color:var(--muted)">${lastLogin}</td>
+      <td>${a.active ? '<span class="badge badge-ok">啟用</span>' : '<span class="badge badge-warn">停用</span>'}</td>
+      <td><button class="btn btn-outline btn-sm" onclick="openAdminAccModal(${a.id})">編輯</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteAdminAcc(${a.id},'${escHtml(a.username)}')" style="margin-left:4px">刪除</button></td>
+    </tr>`;
+  }).join('');
+}
+
+// ── 教育訓練 → 概覽 ──────────────────────────────────────────
+let trainingSummaryList = [];
+function renderTrainingSummary() {
+  const q    = (document.getElementById('trn-search')?.value || '').toLowerCase();
+  const dept = document.getElementById('trn-dept')?.value || '';
+  const tbody= document.getElementById('training-summary-tbody');
+  if (!tbody) return;
+  let list = trainingSummaryList;
+  if (q)    list = list.filter(d => (d.name||'').toLowerCase().includes(q));
+  if (dept) list = list.filter(d => (d.department||'') === dept);
+  if (!list.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><div class="empty-state-text">無符合員工</div></td></tr>'; return; }
+  tbody.innerHTML = list.map(d => `
+    <tr>
+      <td>${escHtml(d.name)}</td>
+      <td style="color:var(--muted)">${escHtml(d.department||'')}</td>
+      <td style="text-align:center">${d.total}</td>
+      <td style="text-align:center;color:var(--green)">${d.valid}</td>
+      <td style="text-align:center;color:var(--amber,#d97706)">${d.expiring_soon > 0 ? `<strong>${d.expiring_soon}</strong>` : 0}</td>
+      <td style="text-align:center;color:var(--red)">${d.expired > 0 ? `<strong>${d.expired}</strong>` : 0}</td>
+      <td>
+        <button class="btn btn-sm btn-outline" onclick="openTrainingModal(null,${d.id})">新增</button>
+        <button class="btn btn-sm" onclick="viewStaffTraining(${d.id},'${escHtml(d.name)}')">查看</button>
+      </td>
+    </tr>`).join('');
+}
+
+// ── 費用審核 client-side filter ───────────────────────────────
+let _expenseReviewList = [];
+function filterExpenseReview() {
+  const month  = document.getElementById('exp-filter-month')?.value || '';
+  const q      = (document.getElementById('exp-search')?.value || '').toLowerCase();
+  const tbody  = document.getElementById('exp-review-tbody');
+  if (!tbody || !_expenseReviewList.length) return;
+  let list = _expenseReviewList;
+  if (month) list = list.filter(c => (c.expense_date||'').startsWith(month));
+  if (q)     list = list.filter(c => (c.staff_name||'').toLowerCase().includes(q));
+  if (!list.length) { tbody.innerHTML = '<tr><td colspan="8" class="empty-state"><div class="empty-state-text">無符合記錄</div></td></tr>'; return; }
+  const statusMap   = { pending:'待審核', approved:'已核准', rejected:'已拒絕' };
+  const statusColor = { pending:'var(--accent)', approved:'var(--green)', rejected:'var(--red)' };
+  tbody.innerHTML = list.map(c => `
+    <tr>
+      <td>${esc(c.staff_name||'—')}</td>
+      <td style="font-family:'DM Mono',monospace;font-size:12px">${c.expense_date}</td>
+      <td>${esc(c.category)}</td>
+      <td style="font-family:'DM Mono',monospace;text-align:right">NT$ ${fmtNum(c.amount)}</td>
+      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.note||'—')}</td>
+      <td style="text-align:center">${c.document_id ? `<span style="color:var(--accent);font-size:12px">有附件</span>` : '—'}</td>
+      <td><span style="color:${statusColor[c.status]||'var(--muted)'};font-size:12px;font-weight:600">${statusMap[c.status]||c.status}</span></td>
+      <td>
+        ${c.status === 'pending' ? `
+          <button class="btn btn-sm btn-success" onclick="reviewExpense(${c.id},'approve')">核准</button>
+          <button class="btn btn-sm" style="background:var(--red);color:#fff;margin-left:4px" onclick="promptRejectExpense(${c.id})">拒絕</button>
+        ` : '—'}
+      </td>
+    </tr>
+  `).join('');
 }
 </script>
 </html>
