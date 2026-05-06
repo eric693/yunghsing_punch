@@ -3415,8 +3415,9 @@ async function previewFormula() {
   const el = document.getElementById('fe-preview');
   if (!formula) { el.innerHTML = '<span style="color:var(--muted)">輸入公式後即時顯示計算結果</span>'; return; }
   try {
+    const whole_day_leave_days = personal_days + sick_days;
     const { ok, data } = await api('/api/salary/formula/preview',
-      apiJSON({ formula, base_salary, insured_salary, service_years, actual_days, personal_days, sick_days }));
+      apiJSON({ formula, base_salary, insured_salary, service_years, actual_days, personal_days, sick_days, whole_day_leave_days }));
     if (ok && data.error === null) {
       el.innerHTML = `計算結果：<strong style="color:var(--green);font-size:18px">$${Number(data.result).toLocaleString('zh-TW')}</strong>`;
     } else {
@@ -3430,7 +3431,7 @@ async function previewFormula() {
 function applyFormula(itemId) {
   const formula = document.getElementById('fe-formula')?.value.trim();
   // Apply to the salary item form
-  const formulaInput = document.getElementById('si-formula') || document.getElementById('sim-formula') || document.getElementById('sal-item-formula');
+  const formulaInput = document.getElementById(itemId);
   if (formulaInput) formulaInput.value = formula;
   document.getElementById('formula-editor-modal')?.remove();
   showToast('公式已套用', 'success');
@@ -10095,4 +10096,5 @@ function filterExpenseReview() {
   `).join('');
 }
 </script>
+</body>
 </html>
