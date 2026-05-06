@@ -90,6 +90,18 @@
   .bio-msg { font-size: 12px; text-align: center; margin-top: 6px; min-height: 16px; }
   .bio-msg.err { color: var(--red); }
   .bio-msg.ok  { color: #2e9e6b; }
+  .remember-row {
+    display: flex; align-items: center; gap: 8px;
+    margin-top: -4px; margin-bottom: 4px;
+  }
+  .remember-row input[type="checkbox"] {
+    width: 16px; height: 16px; margin: 0; cursor: pointer;
+    accent-color: var(--accent);
+  }
+  .remember-row label {
+    font-size: 12px; color: var(--muted); margin: 0;
+    letter-spacing: 0; text-transform: none; cursor: pointer;
+  }
 </style>
 </head>
 <body>
@@ -117,6 +129,10 @@
     <input type="text" id="un" name="username" placeholder="輸入帳號" autofocus autocomplete="username" autocapitalize="none">
     <label for="pw">密碼</label>
     <input type="password" id="pw" name="password" placeholder="輸入密碼" autocomplete="current-password">
+    <div class="remember-row">
+      <input type="checkbox" id="remember-me">
+      <label for="remember-me">記住帳號密碼</label>
+    </div>
     {% if error %}
     <div class="error-msg">{{ error }}</div>
     {% endif %}
@@ -143,6 +159,31 @@ function bioMsg(msg,type){
   const el=document.getElementById('bio-msg');
   el.textContent=msg;el.className='bio-msg'+(type?' '+type:'');
 }
+
+// ── Remember me ──────────────────────────────────────────────────
+(function(){
+  const saved = localStorage.getItem('admin_remember');
+  if(saved){
+    try{
+      const d = JSON.parse(saved);
+      document.getElementById('un').value = d.u || '';
+      document.getElementById('pw').value = d.p ? atob(d.p) : '';
+      document.getElementById('remember-me').checked = true;
+    }catch(e){}
+  }
+})();
+
+document.getElementById('login-form').addEventListener('submit', function(){
+  const chk = document.getElementById('remember-me').checked;
+  if(chk){
+    localStorage.setItem('admin_remember', JSON.stringify({
+      u: document.getElementById('un').value,
+      p: btoa(document.getElementById('pw').value)
+    }));
+  } else {
+    localStorage.removeItem('admin_remember');
+  }
+});
 
 // Show biometric button if WebAuthn is supported
 if(window.PublicKeyCredential){

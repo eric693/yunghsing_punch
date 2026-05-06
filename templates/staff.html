@@ -33,6 +33,9 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
 .login-btn:active{opacity:.85}
 .login-btn:disabled{opacity:.5}
 .login-err{color:var(--red);font-size:12px;text-align:center;margin-top:8px;min-height:16px}
+.remember-row{display:flex;align-items:center;gap:7px;margin-bottom:12px}
+.remember-row input[type="checkbox"]{width:16px;height:16px;margin:0;cursor:pointer;accent-color:var(--accent);flex-shrink:0}
+.remember-row label{font-size:12px;color:var(--muted);cursor:pointer;letter-spacing:.02em}
 .tab-bar{display:flex;background:var(--navy-mid);border-bottom:1px solid rgba(255,255,255,.08)}
 .tab{flex:1;padding:13px 8px;text-align:center;font-family:"Noto Sans TC",sans-serif;font-size:13px;font-weight:600;color:rgba(255,255,255,.45);cursor:pointer;border:none;background:transparent;transition:all .15s;border-bottom:3px solid transparent}
 .tab.active{color:#fff;border-bottom-color:var(--gold)}
@@ -150,6 +153,10 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
       <input class="fi" type="text" id="inp-user" placeholder="請輸入帳號" autocapitalize="none" spellcheck="false" autocomplete="username">
       <div class="fl">密碼</div>
       <input class="fi" type="password" id="inp-pass" placeholder="請輸入密碼" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+      <div class="remember-row">
+        <input type="checkbox" id="remember-me">
+        <label for="remember-me">記住帳號密碼</label>
+      </div>
       <button class="login-btn" id="login-btn" onclick="doLogin()">登入</button>
       <!-- WebAuthn biometric (shown only when supported) -->
       <div id="bio-sep" style="display:none;margin-top:12px">
@@ -561,6 +568,15 @@ setInterval(tick,1000);tick();
 function showLogin(){
   document.getElementById('screen-login').style.display='';
   document.getElementById('screen-main').style.display='none';
+  try{
+    const saved=localStorage.getItem('staff_remember');
+    if(saved){
+      const d=JSON.parse(saved);
+      document.getElementById('inp-user').value=d.u||'';
+      document.getElementById('inp-pass').value=d.p?atob(d.p):'';
+      document.getElementById('remember-me').checked=true;
+    }
+  }catch(e){}
 }
 async function doLogin(){
   const u=document.getElementById('inp-user').value.trim();
@@ -574,6 +590,9 @@ async function doLogin(){
     const r=await fetch('/api/punch/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
     const d=await r.json();
     if(!r.ok){err.textContent=d.error||'登入失敗';return;}
+    const chk=document.getElementById('remember-me').checked;
+    if(chk){localStorage.setItem('staff_remember',JSON.stringify({u,p:btoa(p)}));}
+    else{localStorage.removeItem('staff_remember');}
     me=d;document.getElementById('inp-pass').value='';showMain();loadAnnStaff();
   }catch(e){err.textContent='網路錯誤，請重試';}
   finally{btn.disabled=false;btn.textContent='登入';}
