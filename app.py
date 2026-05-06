@@ -10601,11 +10601,29 @@ def _line_submit_leave(staff, user_id, text):
             {'label': '全天',     'text': f'請假 {leave_type_name} {date_str} 全天'},
             {'label': '上午半天', 'text': f'請假 {leave_type_name} {date_str} 上午'},
             {'label': '下午半天', 'text': f'請假 {leave_type_name} {date_str} 下午'},
-            {'label': '⏰ 自訂時段', 'text': f'請假 {leave_type_name} {date_str} 09:00'},
+            {'label': '⏰ 自訂時段', 'text': f'請假 {leave_type_name} {date_str} 選開始'},
         ]
         _send_line_with_quick_reply(user_id,
             f'🌿 請假 · {leave_type_name}\n日期：{date_str}\n\n請選擇時段：',
             items_period)
+        return
+
+    # Step 2.55: "請假 假別 DATE 選開始" → Quick Reply 選開始時間
+    if (len(parts) == 4
+            and _re_lv.match(r'^\d{4}-\d{2}-\d{2}$', parts[2])
+            and parts[3] == '選開始'):
+        leave_type_name = parts[1]
+        date_str = parts[2]
+        common_starts = ['07:00','07:30','08:00','08:30','09:00','09:30',
+                         '10:00','10:30','11:00','12:00','13:00','14:00','15:00']
+        items_start = [
+            {'label': t, 'text': f'請假 {leave_type_name} {date_str} {t}'}
+            for t in common_starts
+        ]
+        _send_line_with_quick_reply(user_id,
+            f'🌿 請假 · {leave_type_name}\n日期：{date_str}\n\n請選擇開始時間：\n'
+            f'（或手動輸入：請假 {leave_type_name} {date_str} HH:MM）',
+            items_start)
         return
 
     # Step 2.6: "請假 假別 DATE HH:MM" → Quick Reply 選結束時間
