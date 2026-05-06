@@ -7958,13 +7958,14 @@ def api_formula_preview():
     insured_salary= float(b.get('insured_salary', 30000))
     service_years = float(b.get('service_years', 1))
     extra = {
-        'actual_days':   float(b.get('actual_days', 22)),
-        'work_days':     float(b.get('work_days', 22)),
-        'leave_days':    float(b.get('leave_days', 0)),
-        'unpaid_days':   float(b.get('unpaid_days', 0)),
-        'personal_days': float(b.get('personal_days', 0)),
-        'sick_days':     float(b.get('sick_days', 0)),
-        'daily_wage':    base_salary / 30 if base_salary > 0 else 0,
+        'actual_days':          float(b.get('actual_days', 22)),
+        'work_days':            float(b.get('work_days', 22)),
+        'leave_days':           float(b.get('leave_days', 0)),
+        'unpaid_days':          float(b.get('unpaid_days', 0)),
+        'whole_day_leave_days': float(b.get('whole_day_leave_days', 0)),
+        'personal_days':        float(b.get('personal_days', 0)),
+        'sick_days':            float(b.get('sick_days', 0)),
+        'daily_wage':           base_salary / 30 if base_salary > 0 else 0,
     }
 
     if not formula:

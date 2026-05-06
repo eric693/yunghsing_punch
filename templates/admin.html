@@ -3396,6 +3396,7 @@ function openFormulaEditor(itemId, currentFormula) {
       </div>
     </div>`;
   document.body.appendChild(modal);
+  if (currentFormula) previewFormula();
 }
 
 function applyFormulaPreset(formula) {
