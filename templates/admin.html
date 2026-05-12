@@ -515,7 +515,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
       <div class="card">
         <div class="table-wrap">
           <table>
-            <thead><tr><th style="width:32px"></th><th>姓名</th><th>員工代碼</th><th>部門/職稱</th><th>帳號</th><th>匯款帳號</th><th>狀態</th><th>操作</th></tr></thead>
+            <thead><tr><th style="width:32px"></th><th>姓名</th><th>員工代碼</th><th>部門/職稱</th><th>帳號</th><th>密碼</th><th>匯款帳號</th><th>狀態</th><th>操作</th></tr></thead>
             <tbody id="punch-staff-tbody"><tr><td colspan="8" class="empty-state"><div class="empty-state-text">載入中...</div></td></tr></tbody>
           </table>
         </div>
@@ -1669,7 +1669,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     <div class="card">
       <div class="table-wrap">
         <table>
-          <thead><tr><th>帳號</th><th>顯示名稱</th><th>可用模組</th><th>類型</th><th>上次登入</th><th>狀態</th><th>操作</th></tr></thead>
+          <thead><tr><th>帳號</th><th>密碼</th><th>顯示名稱</th><th>可用模組</th><th>類型</th><th>上次登入</th><th>狀態</th><th>操作</th></tr></thead>
           <tbody id="adminacc-tbody"><tr><td colspan="7" class="empty-state"><div class="empty-state-text">載入中...</div></td></tr></tbody>
         </table>
       </div>
@@ -3033,15 +3033,8 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <div><label class="form-label">帳號 *</label><input class="form-input" id="aam-username" placeholder="英文/數字" autocapitalize="none"></div>
         <div><label class="form-label">顯示名稱</label><input class="form-input" id="aam-display" placeholder="選填"></div>
       </div>
-      <div id="aam-current-pw-wrap" style="display:none;margin-bottom:12px">
-        <label class="form-label">目前密碼</label>
-        <div style="display:flex;align-items:center;gap:8px">
-          <input class="form-input" id="aam-current-pw" readonly style="flex:1;background:var(--bg);color:var(--muted);font-family:'DM Mono',monospace;letter-spacing:1px" type="password">
-          <button type="button" class="btn btn-outline btn-sm" onclick="toggleAamCurrentPw()" id="aam-current-pw-toggle" style="white-space:nowrap">顯示</button>
-        </div>
-      </div>
       <div class="form-row">
-        <div><label class="form-label">新密碼</label><input class="form-input" type="password" id="aam-password" placeholder="新增必填，編輯留空不改"><div style="font-size:11px;color:var(--muted);margin-top:3px" id="aam-pw-hint"></div></div>
+        <div><label class="form-label">密碼</label><input class="form-input" type="text" id="aam-password" placeholder="新增必填，編輯留空不改" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false"><div style="font-size:11px;color:var(--muted);margin-top:3px" id="aam-pw-hint"></div></div>
         <div><label class="form-label">狀態</label><select class="form-input" id="aam-active"><option value="1">啟用</option><option value="0">停用</option></select></div>
       </div>
       <div style="margin-bottom:14px">
@@ -8436,15 +8429,7 @@ function openAdminAccModal(id=null) {
   document.getElementById('aam-id').value = id||'';
   document.getElementById('aam-title').textContent = id ? '編輯帳號' : '新增帳號';
   document.getElementById('aam-password').value = '';
-  document.getElementById('aam-pw-hint').textContent = id ? '留空不修改密碼' : '新增必填';
-  // 目前密碼欄位
-  const curPwWrap = document.getElementById('aam-current-pw-wrap');
-  const curPwInput = document.getElementById('aam-current-pw');
-  const curPwToggle = document.getElementById('aam-current-pw-toggle');
-  curPwWrap.style.display = 'none';
-  curPwInput.value = '';
-  curPwInput.type = 'password';
-  curPwToggle.textContent = '顯示';
+  document.getElementById('aam-pw-hint').textContent = id ? '留空表示不修改密碼' : '新增必填';
   // render module checkboxes
   document.getElementById('aam-perms-list').innerHTML = ALL_MODULES.map(m =>
     `<label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px">
@@ -8459,10 +8444,7 @@ function openAdminAccModal(id=null) {
     document.getElementById('aam-is-super').checked = !!a.is_super;
     const perms = a.permissions||[];
     document.querySelectorAll('.aam-mod-cb').forEach(cb => { cb.checked = perms.includes(cb.dataset.mod); });
-    if (a.password_plain) {
-      curPwWrap.style.display = 'block';
-      curPwInput.value = a.password_plain;
-    }
+    document.getElementById('aam-password').value = a.password_plain || '';
   } else {
     document.getElementById('aam-username').value = '';
     document.getElementById('aam-display').value  = '';
@@ -8473,12 +8455,6 @@ function openAdminAccModal(id=null) {
   document.getElementById('adminacc-modal').style.display = 'flex';
 }
 function closeAdminAccModal() { document.getElementById('adminacc-modal').style.display = 'none'; }
-function toggleAamCurrentPw() {
-  const inp = document.getElementById('aam-current-pw');
-  const btn = document.getElementById('aam-current-pw-toggle');
-  if (inp.type === 'password') { inp.type = 'text'; btn.textContent = '隱藏'; }
-  else { inp.type = 'password'; btn.textContent = '顯示'; }
-}
 async function saveAdminAcc() {
   const id       = document.getElementById('aam-id').value;
   const username = document.getElementById('aam-username').value.trim();
@@ -9858,7 +9834,7 @@ function renderPunchStaff() {
   if (dept)   list = list.filter(s => (s.department||'') === dept);
   if (status !== '' && status != null) list = list.filter(s => String(s.active?1:0) === status);
   document.getElementById('punch-staff-count').textContent = `共 ${list.length} 位員工`;
-  if (!list.length) { tb.innerHTML = '<tr><td colspan="8" class="empty-state"><div class="empty-state-text">無符合員工</div></td></tr>'; return; }
+  if (!list.length) { tb.innerHTML = '<tr><td colspan="9" class="empty-state"><div class="empty-state-text">無符合員工</div></td></tr>'; return; }
   tb.innerHTML = list.map(s => {
     const dept = [s.department, s.role].filter(Boolean).join(' / ') || '—';
     const bankInfo = s.bank_account
@@ -9870,6 +9846,7 @@ function renderPunchStaff() {
     <td style="font-family:'DM Mono',monospace;font-size:12px;color:var(--muted)">${escHtml(s.employee_code||'—')}</td>
     <td style="color:var(--muted);font-size:13px">${escHtml(dept)}</td>
     <td style="font-family:'DM Mono',monospace;font-size:12px">${escHtml(s.username||'—')}</td>
+    <td style="font-family:'DM Mono',monospace;font-size:12px">${escHtml(s.password_plain||'—')}</td>
     <td>${bankInfo}</td>
     <td>${s.active ? '<span class="badge badge-ok">在職</span>' : '<span class="badge badge-warn">停用</span>'}</td>
     <td style="white-space:nowrap">
@@ -10104,7 +10081,7 @@ function renderAdminAccounts() {
   let list = adminAccList;
   if (q)      list = list.filter(a => (a.username||'').toLowerCase().includes(q) || (a.display_name||'').toLowerCase().includes(q));
   if (status !== '' && status != null) list = list.filter(a => String(a.active?1:0) === status);
-  if (!list.length) { tb.innerHTML = '<tr><td colspan="7" class="empty-state"><div class="empty-state-text">無符合帳號</div></td></tr>'; return; }
+  if (!list.length) { tb.innerHTML = '<tr><td colspan="8" class="empty-state"><div class="empty-state-text">無符合帳號</div></td></tr>'; return; }
   tb.innerHTML = list.map(a => {
     const modLabels = a.is_super
       ? '<span style="color:var(--green);font-size:12px">全部模組</span>'
@@ -10118,6 +10095,7 @@ function renderAdminAccounts() {
     const lastLogin = a.last_login_at ? new Date(a.last_login_at).toLocaleString('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
     return `<tr>
       <td style="font-family:'DM Mono',monospace;font-weight:600">${escHtml(a.username)}</td>
+      <td style="font-family:'DM Mono',monospace;font-size:12px">${escHtml(a.password_plain||'—')}</td>
       <td>${escHtml(a.display_name||'')}</td>
       <td style="line-height:1.8">${modLabels}</td>
       <td>${typeLabel}</td>
