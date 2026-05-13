@@ -154,7 +154,13 @@ def _labor_law_check_loop():
         _run_labor_law_check()
 
 
+_labor_monitor_started = False
+
 def start_labor_law_monitor():
+    global _labor_monitor_started
+    if _labor_monitor_started:
+        return
+    _labor_monitor_started = True
     threading.Thread(target=_labor_law_check_loop, daemon=True).start()
 
 

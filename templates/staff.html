@@ -1520,7 +1520,7 @@ async function initLeaveTab() {
   // 填入假別選單
   const sel = document.getElementById('leave-type-sel');
   sel.innerHTML = leaveTypeList.map(t =>
-    `<option value="${t.id}" data-pay="${t.pay_rate}" data-max="${t.max_days||''}" data-color="${t.color}" data-hourly="${t.allow_hourly?'1':''}">${esc(t.name)}</option>`
+    `<option value="${t.id}" data-pay="${t.pay_rate}" data-max="${t.max_days||''}" data-color="${t.color}" data-hourly="${t.allow_hourly?'1':''}" data-cert="${t.require_cert?'1':''}">${esc(t.name)}</option>`
   ).join('');
   sel.addEventListener('change', updateLeaveTypeInfo);
   updateLeaveTypeInfo();
@@ -1851,11 +1851,10 @@ async function leaveCertSelected(event) {
 function _onLeaveTypeChange() {
   const sel  = document.getElementById('leave-type-sel');
   const opt  = sel.options[sel.selectedIndex];
-  const name = opt?.text || '';
-  const isSick    = name.includes('病假');
+  const needCert  = opt?.getAttribute('data-cert') === '1';
   const isHourly  = opt?.getAttribute('data-hourly') === '1';
-  document.getElementById('leave-cert-section').style.display = isSick ? '' : 'none';
-  if (!isSick) { _leaveCertDocId = null; document.getElementById('leave-cert-status').textContent = ''; document.getElementById('leave-cert-preview').style.display = 'none'; }
+  document.getElementById('leave-cert-section').style.display = needCert ? '' : 'none';
+  if (!needCert) { _leaveCertDocId = null; document.getElementById('leave-cert-status').textContent = ''; document.getElementById('leave-cert-preview').style.display = 'none'; }
   // 顯示/隱藏小時請假切換
   document.getElementById('leave-unit-toggle').style.display = isHourly ? '' : 'none';
   if (!isHourly) {
@@ -1885,8 +1884,8 @@ async function submitLeaveRequest() {
   const substitute    = document.getElementById('leave-sub').value.trim();
   if (!leave_type_id) { showToast('請選擇假別', 'err'); return; }
   if (!reason) { showToast('請填寫請假原因', 'err'); return; }
-  const typeName = document.getElementById('leave-type-sel').options[document.getElementById('leave-type-sel').selectedIndex]?.text || '';
-  if (typeName.includes('病假') && !_leaveCertDocId) { showToast('病假需上傳病單', 'err'); return; }
+  const selOpt = document.getElementById('leave-type-sel').options[document.getElementById('leave-type-sel').selectedIndex];
+  if (selOpt?.getAttribute('data-cert') === '1' && !_leaveCertDocId) { showToast('此假別需上傳病單/證明文件', 'err'); return; }
 
   const isHourMode = document.getElementById('leave-unit-hour')?.checked;
   let payload;
