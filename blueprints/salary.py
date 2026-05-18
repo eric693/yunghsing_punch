@@ -144,15 +144,17 @@ def salary_record_row(row):
     return d
 
 
-def _eval_formula(formula, base_salary, insured_salary, service_years, extra=None):
+def _eval_formula(formula, base_salary, insured_salary, service_years, extra=None, item_amounts=None):
     """安全計算薪資公式
     可用變數：base_salary, insured_salary, service_years,
               actual_days, work_days, leave_days, unpaid_days,
               whole_day_leave_days（整天假天數，小時請假不計入，全勤判斷用此變數）,
               personal_days, sick_days, daily_wage
     支援條件式：例如 3000 if whole_day_leave_days==0 else 0
+    支援項目代號引用：例如 01/30*personal_days（01 為本薪項目代號）
     """
     if not formula: return 0.0
+    import re as _re
     try:
         ctx = {
             'base_salary':    float(base_salary or 0),
@@ -161,8 +163,15 @@ def _eval_formula(formula, base_salary, insured_salary, service_years, extra=Non
         }
         if extra:
             ctx.update({k: float(v or 0) for k, v in extra.items()})
+        # Replace item code references (e.g. 01, 02) with their computed amounts
+        processed = formula
+        if item_amounts:
+            def _sub_code(m):
+                code = m.group(0)
+                return str(float(item_amounts[code])) if code in item_amounts else code
+            processed = _re.sub(r'\b\d{2}\b', _sub_code, formula)
         from simpleeval import simple_eval
-        result = float(simple_eval(formula, names=ctx))
+        result = float(simple_eval(processed, names=ctx))
         if result != result or abs(result) == float('inf'):  # NaN or Inf
             logging.warning(f"[FORMULA] 無效結果(NaN/Inf): formula={formula!r} ctx={ctx}")
             return 0.0
@@ -474,6 +483,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
     items           = []
     allowance_total = 0.0
     deduction_total = 0.0
+    _item_amounts_by_code = {}  # accumulates code -> amount for cross-item formula references
     _overrides = staff.get('salary_item_overrides') or {}
     if isinstance(_overrides, str):
         try: _overrides = _json.loads(_overrides)
@@ -531,7 +541,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
             """).fetchall()
         for it in salary_items_rows:
             calc_amt = _eval_formula(it['formula'] or '', base_salary or insured_salary,
-                                     insured_salary, service_years, _formula_extra)
+                                     insured_salary, service_years, _formula_extra, _item_amounts_by_code)
             amt, overridden = _apply_override(it['id'], calc_amt)
             note = f'手動設定 ${amt}' if overridden else (it['formula'] or '')
             items.append({
@@ -539,6 +549,8 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
                 'amount': round(amt, 2), 'formula': it['formula'] or '',
                 'calc_note': note,
             })
+            if it.get('code'):
+                _item_amounts_by_code[it['code']] = round(amt, 2)
             deduction_total += amt
 
     else:
@@ -557,7 +569,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
             formula  = it['formula'] or ''
             calc_amt = float(it['amount'] or 0)
             if formula:
-                calc_amt = _eval_formula(formula, base_salary, insured_salary, service_years, _formula_extra)
+                calc_amt = _eval_formula(formula, base_salary, insured_salary, service_years, _formula_extra, _item_amounts_by_code)
             amt, overridden = _apply_override(it['id'], calc_amt)
             note = f'手動設定 ${amt}' if overridden else formula
             items.append({
@@ -568,6 +580,8 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
                 'formula':   formula,
                 'calc_note': note,
             })
+            if it.get('code'):
+                _item_amounts_by_code[it['code']] = round(amt, 2)
             if it['item_type'] == 'allowance':
                 allowance_total += amt
             else:
@@ -1140,7 +1154,20 @@ def api_formula_preview():
     if not formula:
         return jsonify({'result': 0, 'error': None})
     try:
-        result = _eval_formula(formula, base_salary, insured_salary, service_years, extra)
+        # Pre-calculate all items in order so code references (e.g. 01) resolve correctly
+        preview_amounts = {}
+        with get_db() as _conn:
+            _all_items = _conn.execute(
+                "SELECT * FROM salary_items WHERE active=TRUE ORDER BY sort_order, id"
+            ).fetchall()
+        for _it in _all_items:
+            _f = _it['formula'] or ''
+            _amt = float(_it['amount'] or 0)
+            if _f:
+                _amt = _eval_formula(_f, base_salary, insured_salary, service_years, extra, preview_amounts)
+            if _it.get('code'):
+                preview_amounts[_it['code']] = round(_amt, 2)
+        result = _eval_formula(formula, base_salary, insured_salary, service_years, extra, preview_amounts)
         return jsonify({'result': round(result, 2), 'error': None})
     except Exception as e:
         return jsonify({'result': None, 'error': str(e)})
