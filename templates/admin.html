@@ -1139,7 +1139,10 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
           <code>actual_days</code>（出勤天數）
           <code>personal_days</code>（事假天數）
           <code>sick_days</code>（病假天數）
-          <code>daily_wage</code>（日薪）<br>
+          <code>daily_wage</code>（日薪）
+          <code>leave_hours</code>（請假時數）
+          <code>unpaid_hours</code>（無薪假時數）
+          <code>halfpay_hours</code>（半薪假時數）<br>
           支援條件式：<code>值 if 條件 else 值</code>
           範例：午餐費 <code>actual_days*70</code>
           全勤扣款 <code>3000*(0.5 if personal_days==1 else (1 if personal_days>=2 else 0))</code><br>
@@ -3378,7 +3381,7 @@ function openFormulaEditor(itemId, currentFormula) {
             <input class="form-input" id="fe-years" type="number" value="1" oninput="previewFormula()" style="width:100%">
           </div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">
           <div>
             <label class="form-label">出勤天數（試算用）</label>
             <input class="form-input" id="fe-actual-days" type="number" value="22" oninput="previewFormula()" style="width:100%">
@@ -3390,6 +3393,20 @@ function openFormulaEditor(itemId, currentFormula) {
           <div>
             <label class="form-label">病假天數（試算用）</label>
             <input class="form-input" id="fe-sick-days" type="number" value="0" oninput="previewFormula()" style="width:100%">
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px">
+          <div>
+            <label class="form-label">請假時數（試算用）</label>
+            <input class="form-input" id="fe-leave-hours" type="number" value="0" step="0.1" oninput="previewFormula()" style="width:100%">
+          </div>
+          <div>
+            <label class="form-label">無薪假時數（試算用）</label>
+            <input class="form-input" id="fe-unpaid-hours" type="number" value="0" step="0.1" oninput="previewFormula()" style="width:100%">
+          </div>
+          <div>
+            <label class="form-label">半薪假時數（試算用）</label>
+            <input class="form-input" id="fe-halfpay-hours" type="number" value="0" step="0.1" oninput="previewFormula()" style="width:100%">
           </div>
         </div>
 
@@ -3411,8 +3428,9 @@ function openFormulaEditor(itemId, currentFormula) {
           <code>actual_days</code> — 實際出勤天數　<code>work_days</code> — 應出勤天數<br>
           <code>personal_days</code> — 事假天數　<code>sick_days</code> — 病假天數<br>
           <code>leave_days</code> — 請假天數合計　<code>unpaid_days</code> — 無薪假天數　<code>daily_wage</code> — 日薪<br>
+          <code>leave_hours</code> — 請假時數合計　<code>unpaid_hours</code> — 無薪假時數　<code>halfpay_hours</code> — 半薪假時數<br>
           <strong>支援條件式：</strong><code>X if 條件 else Y</code><br>
-          <strong>範例：</strong>午餐費 <code>actual_days * 70</code>　全勤扣款 <code>3000 * (0.5 if personal_days == 1 else (1 if personal_days >= 2 else 0))</code>
+          <strong>範例：</strong>午餐費 <code>actual_days * 70</code>　時數扣款 <code>daily_wage / 8 * unpaid_hours</code>　全勤扣款 <code>3000 * (0.5 if personal_days == 1 else (1 if personal_days >= 2 else 0))</code>
         </div>
       </div>
       <div class="modal-footer">
@@ -3437,12 +3455,15 @@ async function previewFormula() {
   const actual_days    = parseFloat(document.getElementById('fe-actual-days')?.value || 22);
   const personal_days  = parseFloat(document.getElementById('fe-personal-days')?.value || 0);
   const sick_days      = parseFloat(document.getElementById('fe-sick-days')?.value || 0);
+  const leave_hours    = parseFloat(document.getElementById('fe-leave-hours')?.value || 0);
+  const unpaid_hours   = parseFloat(document.getElementById('fe-unpaid-hours')?.value || 0);
+  const halfpay_hours  = parseFloat(document.getElementById('fe-halfpay-hours')?.value || 0);
   const el = document.getElementById('fe-preview');
   if (!formula) { el.innerHTML = '<span style="color:var(--muted)">輸入公式後即時顯示計算結果</span>'; return; }
   try {
     const whole_day_leave_days = personal_days + sick_days;
     const { ok, data } = await api('/api/salary/formula/preview',
-      apiJSON({ formula, base_salary, insured_salary, service_years, actual_days, personal_days, sick_days, whole_day_leave_days }));
+      apiJSON({ formula, base_salary, insured_salary, service_years, actual_days, personal_days, sick_days, whole_day_leave_days, leave_hours, unpaid_hours, halfpay_hours }));
     if (ok && data.error === null) {
       el.innerHTML = `計算結果：<strong style="color:var(--green);font-size:18px">$${Number(data.result).toLocaleString('zh-TW')}</strong>`;
     } else {

@@ -149,7 +149,8 @@ def _eval_formula(formula, base_salary, insured_salary, service_years, extra=Non
     可用變數：base_salary, insured_salary, service_years,
               actual_days, work_days, leave_days, unpaid_days,
               whole_day_leave_days（整天假天數，小時請假不計入，全勤判斷用此變數）,
-              personal_days, sick_days, daily_wage
+              personal_days, sick_days, daily_wage,
+              leave_hours（本月請假總時數）, unpaid_hours（無薪假時數）, halfpay_hours（半薪假時數）
     支援條件式：例如 3000 if whole_day_leave_days==0 else 0
     支援項目代號引用：例如 01/30*personal_days（01 為本薪項目代號）
     """
@@ -469,6 +470,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         )
         absent_days = len(_absent_date_list)
 
+    _total_leave_hours = sum(x['hours'] for x in _leave_wd if x.get('is_hourly'))
     _formula_extra = {
         'actual_days':          max(0.0, actual_days - absent_days),
         'work_days':            float(total_work_days),
@@ -478,6 +480,9 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         'personal_days':        personal_days,
         'sick_days':            sick_days,
         'daily_wage':           daily_wage,
+        'leave_hours':          _total_leave_hours,
+        'unpaid_hours':         _hourly_unpaid_hours,
+        'halfpay_hours':        _hourly_halfpay_hours,
     }
 
     items           = []
@@ -1149,6 +1154,9 @@ def api_formula_preview():
         'personal_days':        float(b.get('personal_days', 0)),
         'sick_days':            float(b.get('sick_days', 0)),
         'daily_wage':           base_salary / 30 if base_salary > 0 else 0,
+        'leave_hours':          float(b.get('leave_hours', 0)),
+        'unpaid_hours':         float(b.get('unpaid_hours', 0)),
+        'halfpay_hours':        float(b.get('halfpay_hours', 0)),
     }
 
     if not formula:

@@ -622,6 +622,7 @@ def _line_submit_leave(staff, user_id, text):
             WHERE staff_id=%s AND leave_type_id=%s AND year=%s
         """, (staff['id'], lt['id'], int(year))).fetchone()
 
+        total_hours_val = None
         if leave_start_time and leave_end_time:
             daily_hours = float(staff.get('daily_hours') or 8)
             sh, sm = map(int, leave_start_time.split(':'))
@@ -629,7 +630,8 @@ def _line_submit_leave(staff, user_id, text):
             leave_minutes = (eh * 60 + em) - (sh * 60 + sm)
             if leave_minutes <= 0:
                 leave_minutes += 24 * 60
-            days = round(leave_minutes / 60 / daily_hours, 2)
+            total_hours_val = round(leave_minutes / 60, 2)
+            days = round(total_hours_val / daily_hours, 2)
         else:
             s = _dlv.fromisoformat(date_str1); e = _dlv.fromisoformat(date_str2)
             days = sum(1 for i in range((e - s).days + 1)
@@ -650,10 +652,10 @@ def _line_submit_leave(staff, user_id, text):
 
         row = conn.execute("""
             INSERT INTO leave_requests
-              (staff_id, leave_type_id, start_date, end_date, total_days,
+              (staff_id, leave_type_id, start_date, end_date, total_days, total_hours,
                start_half, end_half, reason, status, leave_start_time, leave_end_time, created_at)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s,NOW()) RETURNING id
-        """, (staff['id'], lt['id'], date_str1, date_str2, days,
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s,NOW()) RETURNING id
+        """, (staff['id'], lt['id'], date_str1, date_str2, days, total_hours_val,
               start_half, end_half, reason, leave_start_time, leave_end_time)).fetchone()
 
     if leave_start_time and leave_end_time:
@@ -666,12 +668,13 @@ def _line_submit_leave(staff, user_id, text):
         period_label = ''
 
     bal_str = f'（剩餘 {remain:.1f} 天）' if remain is not None else ''
+    duration_str = f'{total_hours_val} 小時' if total_hours_val else f'{days} 天'
     _send_line_punch(user_id,
         f'✅ 請假申請已送出\n\n'
         f'假別：{lt["name"]} {bal_str}\n'
         f'日期：{date_str1}' + (f' ～ {date_str2}' if date_str2 != date_str1 else '') +
         f'{period_label}\n'
-        f'天數：{days} 天\n\n'
+        f'時數/天數：{duration_str}\n\n'
         f'申請號：#{row["id"]}，等待管理員審核。')
 
 
