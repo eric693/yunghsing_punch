@@ -19,6 +19,10 @@ bp = Blueprint('line_bot', __name__)
 CUSTOM_RICHMENU_IMAGE_PATH = '/tmp/custom_richmenu.png'
 _line_reply_ctx = _threading.local()  # holds reply_token per request thread
 
+# LINE API 逾時 (連線秒數, 讀取秒數)：避免 LINE 慢回應時把背景執行緒卡住太久。
+# 打卡記錄在回覆訊息前已寫入 DB，逾時最多只是漏送確認訊息，不影響打卡本身。
+_LINE_API_TIMEOUT = (3, 5)
+
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -45,7 +49,7 @@ def _send_line_punch(user_id, text):
     cfg = get_line_punch_config()
     if not cfg or not cfg.get('enabled') or not cfg.get('channel_access_token'):
         return
-    api = LineBotApi(cfg['channel_access_token'])
+    api = LineBotApi(cfg['channel_access_token'], timeout=_LINE_API_TIMEOUT)
     msg = TextSendMessage(text=text)
     try:
         token = _use_reply_token()
@@ -71,7 +75,7 @@ def _send_line_with_quick_reply(user_id, text, items):
         for it in items[:13]
     ]
     msg = TextSendMessage(text=text, quick_reply=QuickReply(items=qr_items))
-    api = LineBotApi(cfg['channel_access_token'])
+    api = LineBotApi(cfg['channel_access_token'], timeout=_LINE_API_TIMEOUT)
     try:
         token = _use_reply_token()
         if token:
@@ -115,11 +119,22 @@ def line_punch_webhook():
         return 'Invalid signature', 400
 
     events = _json.loads(body).get('events', [])
-    for event in events:
-        try:
-            _handle_line_punch_event(event, cfg)
-        except Exception as e:
-            print(f"[LINE PUNCH] event handler error: {e}\n{traceback.format_exc()}")
+
+    # 立即回 200 給 LINE，再於背景執行緒處理打卡與回覆訊息。
+    # 下班尖峰時大量請求同時湧入，若在回 200 前同步呼叫 LINE API，
+    # worker 會被卡住、LINE 判定 webhook 逾時而「重送」→ 雪崩式塞爆。
+    # 事件處理不依賴 request/session，可安全在請求結束後於背景執行。
+    def _process_events(events, cfg):
+        for event in events:
+            try:
+                _handle_line_punch_event(event, cfg)
+            except Exception as e:
+                print(f"[LINE PUNCH] event handler error: {e}\n{traceback.format_exc()}")
+
+    if events:
+        _threading.Thread(
+            target=_process_events, args=(events, cfg), daemon=True
+        ).start()
     return 'OK', 200
 
 
@@ -256,7 +271,7 @@ def _handle_line_punch_event(event, cfg):
                     _msg = TextSendMessage(
                         text=f'請傳送您的位置來完成{PUNCH_LABEL[punch_type]}\n點下方「傳送位置」按鈕即可打卡',
                         quick_reply=qr)
-                    _api = LineBotApi(cfg_lp['channel_access_token'])
+                    _api = LineBotApi(cfg_lp['channel_access_token'], timeout=_LINE_API_TIMEOUT)
                     try:
                         token = _use_reply_token()
                         if token:
