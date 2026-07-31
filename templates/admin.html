@@ -6003,8 +6003,13 @@ async function openSalDetail(id) {
   document.getElementById('sdm-confirm-btn').style.display = data.status==='confirmed'?'none':'';
   document.getElementById('sdm-confirm-btn').setAttribute('data-id', id);
   const items = data.items||[];
+  items.forEach((it,i)=>{ it._i = i; });          // 保留在完整陣列中的位置，供修改／刪除用
   const allowItems = items.filter(it=>it.type==='allowance');
   const deductItems= items.filter(it=>it.type==='deduction');
+  const canEditItems = data.status !== 'confirmed';
+  const actTh  = canEditItems ? '<th style="width:56px;padding:6px 4px;border-bottom:1px solid var(--border)"></th>' : '';
+  const actTd  = canEditItems ? '<td style="padding:7px 8px"></td>' : '';
+  const itemRow = it => `<tr style="border-bottom:1px solid #f0f2f8"><td style="padding:5px 8px">${escHtml(it.name)}</td><td style="padding:5px 8px;text-align:right;font-family:'DM Mono',monospace;font-weight:600">${fmtNum(it.amount)}</td><td style="padding:5px 8px;color:var(--muted);font-size:11px">${escHtml(_readableFormula(it.calc_note||'',data))}</td>${canEditItems?`<td style="padding:5px 4px;white-space:nowrap"><span onclick="editSalaryItem(${it._i})" title="修改金額" style="cursor:pointer;font-size:12px">✏️</span> <span onclick="removeSalaryItem(${it._i})" title="刪除此項" style="cursor:pointer;font-size:12px">🗑</span></td>`:''}</tr>`;
   const isHourly = data.salary_type === 'hourly';
   // 時薪制：工時明細表格
   let hourlyTable = '';
@@ -6084,17 +6089,17 @@ async function openSalDetail(id) {
       <div>
         <div style="font-size:12px;font-weight:700;color:var(--green);margin-bottom:8px">津貼項目</div>
         <table style="width:100%;font-size:12px;border-collapse:collapse">
-          <tr style="background:var(--bg)"><th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--border)">項目</th><th style="padding:6px 8px;text-align:right;border-bottom:1px solid var(--border)">金額</th><th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--border)">說明</th></tr>
-          ${allowItems.map(it=>`<tr style="border-bottom:1px solid #f0f2f8"><td style="padding:5px 8px">${escHtml(it.name)}</td><td style="padding:5px 8px;text-align:right;font-family:'DM Mono',monospace;font-weight:600">${fmtNum(it.amount)}</td><td style="padding:5px 8px;color:var(--muted);font-size:11px">${escHtml(_readableFormula(it.calc_note||'',data))}</td></tr>`).join('')}
-          <tr style="background:var(--bg)"><td style="padding:7px 8px;font-weight:700" colspan="2">合計</td><td style="padding:7px 8px;text-align:right;font-family:'DM Mono',monospace;font-weight:700;color:var(--green)">${fmtNum(data.allowance_total)}</td></tr>
+          <tr style="background:var(--bg)"><th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--border)">項目</th><th style="padding:6px 8px;text-align:right;border-bottom:1px solid var(--border)">金額</th><th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--border)">說明</th>${actTh}</tr>
+          ${allowItems.map(itemRow).join('')}
+          <tr style="background:var(--bg)"><td style="padding:7px 8px;font-weight:700" colspan="2">合計</td><td style="padding:7px 8px;text-align:right;font-family:'DM Mono',monospace;font-weight:700;color:var(--green)">${fmtNum(data.allowance_total)}</td>${actTd}</tr>
         </table>
       </div>
       <div>
         <div style="font-size:12px;font-weight:700;color:var(--red);margin-bottom:8px">扣除項目</div>
         <table style="width:100%;font-size:12px;border-collapse:collapse">
-          <tr style="background:var(--bg)"><th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--border)">項目</th><th style="padding:6px 8px;text-align:right;border-bottom:1px solid var(--border)">金額</th><th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--border)">說明</th></tr>
-          ${deductItems.map(it=>`<tr style="border-bottom:1px solid #f0f2f8"><td style="padding:5px 8px">${escHtml(it.name)}</td><td style="padding:5px 8px;text-align:right;font-family:'DM Mono',monospace;font-weight:600">${fmtNum(it.amount)}</td><td style="padding:5px 8px;color:var(--muted);font-size:11px">${escHtml(_readableFormula(it.calc_note||'',data))}</td></tr>`).join('')}
-          <tr style="background:var(--bg)"><td style="padding:7px 8px;font-weight:700" colspan="2">合計</td><td style="padding:7px 8px;text-align:right;font-family:'DM Mono',monospace;font-weight:700;color:var(--red)">${fmtNum(data.deduction_total)}</td></tr>
+          <tr style="background:var(--bg)"><th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--border)">項目</th><th style="padding:6px 8px;text-align:right;border-bottom:1px solid var(--border)">金額</th><th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--border)">說明</th>${actTh}</tr>
+          ${deductItems.map(itemRow).join('')}
+          <tr style="background:var(--bg)"><td style="padding:7px 8px;font-weight:700" colspan="2">合計</td><td style="padding:7px 8px;text-align:right;font-family:'DM Mono',monospace;font-weight:700;color:var(--red)">${fmtNum(data.deduction_total)}</td>${actTd}</tr>
         </table>
       </div>
     </div>
@@ -6214,15 +6219,52 @@ async function addSalaryAdjustment() {
   const {ok, data} = await api(`/api/salary/records/${id}`,{},true);
   if (!ok) return;
   const items = [...(data.items||[]), {id:'adj_'+Date.now(), name, type, amount, formula:'', calc_note:'手動調整'}];
-  const allowTotal = items.filter(i=>i.type==='allowance').reduce((s,i)=>s+i.amount,0);
-  const deductTotal = items.filter(i=>i.type==='deduction').reduce((s,i)=>s+i.amount,0);
-  const body = { items, allowance_total:allowTotal, deduction_total:deductTotal, net_pay:allowTotal-deductTotal };
-  const {ok:ok2} = await api(`/api/salary/records/${id}`, apiPUT(body));
-  if (!ok2) return;
   document.getElementById('adj-name').value='';
   document.getElementById('adj-amount').value='';
-  showToast(`已加入「${name}」$${fmtNum(amount)}`,'success');
-  await openSalDetail(id); // re-render modal
+  await _saveSalItems(id, items, `已加入「${name}」$${fmtNum(amount)}`);
+}
+
+// 修改／刪除薪資明細中的單一項目（不必重新產生整份草稿）
+async function _saveSalItems(id, items, toastMsg) {
+  const clean = items.map(({_i, ...rest}) => rest);
+  const allowTotal  = clean.filter(i=>i.type==='allowance').reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
+  const deductTotal = clean.filter(i=>i.type==='deduction').reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
+  const {ok} = await api(`/api/salary/records/${id}`, apiPUT({
+    items: clean, allowance_total: allowTotal, deduction_total: deductTotal,
+    net_pay: allowTotal - deductTotal
+  }));
+  if (!ok) return;
+  showToast(toastMsg,'success');
+  await openSalDetail(id);
+  await loadSalaryRecords();
+}
+
+async function editSalaryItem(idx) {
+  const id = salDetailId;
+  const {ok, data} = await api(`/api/salary/records/${id}`,{},true);
+  if (!ok) return;
+  const items = data.items||[];
+  const it = items[idx];
+  if (!it) { showToast('找不到該項目，請重新開啟明細','error'); return; }
+  const input = prompt(`修改「${it.name}」金額：`, it.amount);
+  if (input === null) return;
+  const amt = parseFloat(input);
+  if (isNaN(amt) || amt < 0) { showToast('金額格式錯誤','error'); return; }
+  it.amount = amt;
+  it.calc_note = (it.calc_note && !it.calc_note.startsWith('手動')) ? `手動修改（原：${it.calc_note}）` : '手動調整';
+  await _saveSalItems(id, items, `已將「${it.name}」改為 $${fmtNum(amt)}`);
+}
+
+async function removeSalaryItem(idx) {
+  const id = salDetailId;
+  const {ok, data} = await api(`/api/salary/records/${id}`,{},true);
+  if (!ok) return;
+  const items = data.items||[];
+  const it = items[idx];
+  if (!it) { showToast('找不到該項目，請重新開啟明細','error'); return; }
+  if (!confirm(`確定刪除「${it.name}」$${fmtNum(it.amount)}？\n（僅影響本月此員工，重新產生草稿會還原）`)) return;
+  items.splice(idx, 1);
+  await _saveSalItems(id, items, `已刪除「${it.name}」`);
 }
 
 async function deleteSalRecord(id) {

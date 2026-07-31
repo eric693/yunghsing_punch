@@ -433,7 +433,48 @@ def api_export_salary():
                      float(r['ot_pay'] or 0), float(r['net_pay'] or 0),
                      '已確認' if r['status'] == 'confirmed' else '草稿', r['note'] or ''])
     _xl_write_rows(ws, data, len(headers), number_cols={6,7,8,9,10,11,12,13,14,15})
+    _xl_salary_item_sheet(wb, rows, month)
     return _xl_response(wb, f'salary_{month}.xlsx')
+
+
+def _xl_salary_item_sheet(wb, rows, month):
+    """第二個工作表：每位員工的加項／扣項逐項展開（一項一欄）"""
+    import json as _json
+    parsed = []
+    allow_names, deduct_names = [], []      # 保持出現順序，不用 set 以免欄位亂跳
+    for r in rows:
+        items = r['items'] or []
+        if isinstance(items, str):
+            try: items = _json.loads(items)
+            except Exception: items = []
+        amounts = {}
+        for it in items:
+            name = (it.get('name') or '').strip() or '(未命名)'
+            amt  = float(it.get('amount') or 0)
+            amounts[name] = amounts.get(name, 0) + amt
+            if name not in allow_names and name not in deduct_names:
+                (allow_names if it.get('type') == 'allowance' else deduct_names).append(name)
+        parsed.append((r, amounts))
+
+    ws = wb.create_sheet(f'{month} 加扣項明細')
+    base_headers = ['員工代碼', '姓名', '部門', '職稱']
+    headers = (base_headers
+               + [f'加項-{n}' for n in allow_names] + ['津貼合計']
+               + [f'扣項-{n}' for n in deduct_names] + ['扣除合計', '實領金額', '狀態'])
+    widths = [10, 10, 12, 12] + [13] * (len(allow_names) + 1) + [13] * (len(deduct_names) + 1) + [12, 8]
+    _xl_write_header(ws, headers, widths)
+
+    data = []
+    for r, amounts in parsed:
+        row = [r['employee_code'] or '', r['staff_name'], r['department'] or '', r['role'] or '']
+        row += [amounts.get(n, 0.0) for n in allow_names]
+        row += [float(r['allowance_total'] or 0)]
+        row += [amounts.get(n, 0.0) for n in deduct_names]
+        row += [float(r['deduction_total'] or 0), float(r['net_pay'] or 0),
+                '已確認' if r['status'] == 'confirmed' else '草稿']
+        data.append(row)
+    num_cols = set(range(len(base_headers) + 1, len(headers)))  # 除首4欄與末欄狀態外皆為數字
+    _xl_write_rows(ws, data, len(headers), number_cols=num_cols)
 
 
 # ── Leave Export ───────────────────────────────────────────────────
