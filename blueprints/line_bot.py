@@ -585,8 +585,10 @@ def _line_submit_leave(staff, user_id, text):
             and parts[3] == '選開始'):
         leave_type_name = parts[1]
         date_str = parts[2]
-        common_starts = ['07:00', '07:30', '08:00', '08:30', '09:00', '09:30',
-                         '10:00', '10:30', '11:00', '12:00', '13:00', '14:00', '15:00']
+        # 對齊公司工時 08:00–17:00，涵蓋到 16:30（下午請一兩小時也能選）。
+        # LINE Quick Reply 上限 13 顆，故只放工時內時段、去掉上班前的 07:xx。
+        common_starts = ['08:00', '08:30', '09:00', '09:30', '10:00', '11:00',
+                         '12:00', '13:00', '14:00', '15:00', '15:30', '16:00', '16:30']
         items_start = [
             {'label': t, 'text': f'請假 {leave_type_name} {date_str} {t}'}
             for t in common_starts
