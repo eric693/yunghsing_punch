@@ -46,6 +46,8 @@ def init_salary_db():
             created_at  TIMESTAMPTZ DEFAULT NOW()
         )""",
         "ALTER TABLE salary_items ADD COLUMN IF NOT EXISTS code TEXT DEFAULT ''",
+        # 雇主提繳（如勞退6%）：列在明細但不計入總支給、稅基與比例計酬基準
+        "ALTER TABLE salary_items ADD COLUMN IF NOT EXISTS employer_contribution BOOLEAN DEFAULT FALSE",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS salary_item_ids JSONB DEFAULT NULL",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS salary_item_overrides JSONB DEFAULT NULL",
         "ALTER TABLE salary_records ADD COLUMN IF NOT EXISTS income_tax_withheld    NUMERIC(12,2) DEFAULT 0",
@@ -127,12 +129,14 @@ def _get_salary_calc_settings():
         'auto_leave_deduction':  cfg.get('auto_leave_deduction',  'true') == 'true',
         'auto_absent_deduction': cfg.get('auto_absent_deduction', 'true') == 'true',
         'auto_income_tax':       cfg.get('auto_income_tax',       'true') == 'true',
+        'prorate_partial_month': cfg.get('prorate_partial_month', 'true') == 'true',
     }
 
 
 def salary_item_row(row):
     if not row: return None
     d = dict(row)
+    d['employer_contribution'] = bool(d.get('employer_contribution', False))
     if d.get('amount') is not None: d['amount'] = float(d['amount'])
     if d.get('created_at'): d['created_at'] = d['created_at'].isoformat()
     return d
@@ -155,11 +159,13 @@ def salary_record_row(row):
     return d
 
 
-def _eval_formula(formula, base_salary, insured_salary, service_years, extra=None, item_amounts=None):
+def _eval_formula(formula, base_salary, insured_salary, service_years, extra=None,
+                  item_amounts=None, unresolved=None, known_codes=None):
     """安全計算薪資公式
     可用變數：base_salary, insured_salary, service_years,
               actual_days, work_days, leave_days, unpaid_days,
               whole_day_leave_days（整天假天數，小時請假不計入，全勤判斷用此變數）,
+              absent_days（曠職/未打卡天數，全勤判斷建議一併檢查）,
               personal_days, sick_days, daily_wage,
               leave_hours（本月請假總時數）, unpaid_hours（無薪假時數）, halfpay_hours（半薪假時數）
     支援條件式：例如 3000 if whole_day_leave_days==0 else 0
@@ -180,7 +186,15 @@ def _eval_formula(formula, base_salary, insured_salary, service_years, extra=Non
         if item_amounts:
             def _sub_code(m):
                 code = m.group(0)
-                return str(float(item_amounts[code])) if code in item_amounts else code
+                if code in item_amounts:
+                    return str(float(item_amounts[code]))
+                # 只有「確實是薪資項目代號」才代 0；一般兩位數字（如 /30）維持原樣
+                if known_codes and code in known_codes:
+                    if unresolved is not None and code not in unresolved:
+                        unresolved.append(code)
+                    logging.warning(f"[FORMULA] 代號 {code} 該員工未啟用，以 0 計: formula={formula!r}")
+                    return '0'
+                return code
             processed = _re.sub(r'(?<![.\d])\b\d{2}\b(?![.\d])', _sub_code, formula)
         from simpleeval import simple_eval
         result = float(simple_eval(processed, names=ctx))
@@ -196,12 +210,15 @@ def _eval_formula(formula, base_salary, insured_salary, service_years, extra=Non
         return 0.0
 
 
-def _calc_service_years(hire_date_str):
+def _calc_service_years(hire_date_str, ref_date=None):
+    """年資。ref_date 給定時以該日為基準（補算舊月份薪資用），否則用今天。"""
     if not hire_date_str: return 0.0
     from datetime import date as _d4, datetime as _dt4
     try:
-        hire = _d4.fromisoformat(str(hire_date_str))
-        return round((_dt4.now(TW_TZ).date() - hire).days / 365.25, 2)
+        hire = _d4.fromisoformat(str(hire_date_str)[:10])
+        ref  = ref_date or _dt4.now(TW_TZ).date()
+        if isinstance(ref, str): ref = _d4.fromisoformat(ref[:10])
+        return max(0.0, round((ref - hire).days / 365.25, 2))
     except Exception:
         return 0.0
 
@@ -315,6 +332,22 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
 
     _sal_cfg = _get_salary_calc_settings()
 
+    # 到職日 / 離職日：當月只計算在職區間內的日子
+    def _as_date(v):
+        if not v: return None
+        if isinstance(v, str):
+            try: return _d5.fromisoformat(v[:10])
+            except Exception: return None
+        return getattr(v, 'date', lambda: v)() if hasattr(v, 'hour') else v
+    _hire_d = _as_date(staff.get('hire_date'))
+    _term_d = _as_date(staff.get('terminated_at'))
+
+    def _in_employment(ds):
+        d = _d5.fromisoformat(ds)
+        if _hire_d and d < _hire_d: return False
+        if _term_d and d > _term_d: return False
+        return True
+
     if total_work_days is None:
         shift_date_rows = conn.execute("""
             SELECT DISTINCT shift_date FROM shift_assignments
@@ -338,12 +371,18 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
                     scheduled_dates.add(_ds)
             total_work_days = len(scheduled_dates)
 
+        if scheduled_dates and (_hire_d or _term_d):
+            scheduled_dates = {ds for ds in scheduled_dates if _in_employment(ds)}
+            total_work_days = len(scheduled_dates)
+
     salary_type    = staff.get('salary_type', 'monthly') or 'monthly'
     base_salary    = float(staff.get('base_salary')    or 0)
     hourly_rate    = float(staff.get('hourly_rate')    or 0)
     insured_salary = float(staff.get('insured_salary') or base_salary)
     daily_hours    = float(staff.get('daily_hours')    or 8)
-    service_years  = _calc_service_years(staff.get('hire_date'))
+    # 以該薪資月份的月底為基準計算年資，補算舊月份才不會用到今天的年資
+    service_years  = _calc_service_years(
+        staff.get('hire_date'), _d5(y, m, _cal2.monthrange(y, m)[1]))
 
     actual_work_hours = 0.0
     punch_work_days   = 0
@@ -492,6 +531,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         'sick_days':            sick_days,
         'daily_wage':           daily_wage,
         'leave_hours':          _total_leave_hours,
+        'absent_days':          float(absent_days),
         'unpaid_hours':         _hourly_unpaid_hours,
         'halfpay_hours':        _hourly_halfpay_hours,
     }
@@ -584,28 +624,62 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
             items_rows = conn.execute(
                 "SELECT * FROM salary_items WHERE active=TRUE ORDER BY sort_order, id"
             ).fetchall()
+        # 系統中所有已定義的項目代號（用來區分公式裡的「代號」與一般數字）
+        _all_item_codes = {
+            r['code'] for r in conn.execute(
+                "SELECT code FROM salary_items WHERE code IS NOT NULL AND code <> ''"
+            ).fetchall() if r['code']
+        }
         for it in items_rows:
             formula  = it['formula'] or ''
             calc_amt = float(it['amount'] or 0)
+            _unres   = []
             if formula:
-                calc_amt = _eval_formula(formula, base_salary, insured_salary, service_years, _formula_extra, _item_amounts_by_code)
+                calc_amt = _eval_formula(formula, base_salary, insured_salary, service_years,
+                                         _formula_extra, _item_amounts_by_code, _unres,
+                                         _all_item_codes)
             amt, overridden = _apply_override(it['id'], calc_amt)
             amt = _round_money(amt)
             note = f'手動設定 ${amt}' if overridden else formula
+            if _unres and not overridden:
+                note += f"（代號 {'、'.join(_unres)} 未啟用，以 0 計）"
+            _employer = bool(it.get('employer_contribution'))
             items.append({
                 'id':        it['id'],
                 'name':      it['name'],
                 'type':      it['item_type'],
                 'amount':    amt,
                 'formula':   formula,
-                'calc_note': note,
+                'calc_note': (note + '（雇主提繳，不計入實發）') if _employer else note,
+                'employer_contribution': _employer,
             })
             if it.get('code'):
                 _item_amounts_by_code[it['code']] = amt
+            if _employer:
+                continue          # 雇主提繳不計入總支給／應扣，也不進稅基
             if it['item_type'] == 'allowance':
                 allowance_total += amt
             else:
                 deduction_total += amt
+
+    # 到職／離職當月：加項按在職日數比例計酬（加班費不比例）
+    prorate_ratio = 1.0
+    if (_sal_cfg['prorate_partial_month'] and salary_type == 'monthly'
+            and (_hire_d or _term_d)):
+        _dim = _cal2.monthrange(y, m)[1]
+        _p_start = max(_hire_d, _d5(y, m, 1)) if _hire_d else _d5(y, m, 1)
+        _p_end   = min(_term_d, _d5(y, m, _dim)) if _term_d else _d5(y, m, _dim)
+        _employed_days = max(0, (_p_end - _p_start).days + 1) if _p_end >= _p_start else 0
+        if _employed_days < _dim:
+            prorate_ratio = _employed_days / _dim
+            deduct = _round_money(allowance_total * (1 - prorate_ratio))
+            if deduct > 0:
+                items.append({
+                    'id': 'prorate', 'name': '未在職日數扣款（到職/離職當月）',
+                    'type': 'deduction', 'amount': deduct, 'formula': '',
+                    'calc_note': f'在職 {_employed_days}/{_dim} 天，加項按比例計酬',
+                })
+                deduction_total += deduct
 
     if ot_pay > 0:
         ot_pay = _round_money(ot_pay)
@@ -618,7 +692,19 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
 
     # 時薪制以實際打卡工時計薪，未出勤時段本來就沒領錢，
     # 再扣請假款會變成雙重處罰，故自動請假扣款僅適用月薪制
-    if _sal_cfg['auto_leave_deduction'] and salary_type == 'monthly':
+    # 若薪資項目公式已自行處理請假扣款（引用 personal_days / sick_days / leave_hours 等），
+    # 就不再套用系統自動扣款，避免同一筆假被扣兩次
+    _leave_vars = ('personal_days', 'sick_days', 'leave_days', 'leave_hours',
+                   'unpaid_days', 'unpaid_hours', 'halfpay_hours')
+    _formula_handles_leave = any(
+        it.get('formula') and any(v in it['formula'] for v in _leave_vars)
+        for it in items if isinstance(it.get('formula'), str)
+    )
+    if _formula_handles_leave and _sal_cfg['auto_leave_deduction']:
+        logging.info('[SALARY] 已有薪資項目公式處理請假扣款，略過系統自動請假扣款')
+
+    if (_sal_cfg['auto_leave_deduction'] and salary_type == 'monthly'
+            and not _formula_handles_leave):
         if unpaid_days > 0 and daily_wage > 0:
             leave_names = '、'.join(set(
                 r['leave_name'] for r in leave_rows
@@ -776,7 +862,7 @@ def api_salary_calc_settings_get():
 @require_module('salary')
 def api_salary_calc_settings_post():
     b = request.get_json(force=True) or {}
-    allowed = {'auto_leave_deduction', 'auto_absent_deduction', 'auto_income_tax'}
+    allowed = {'auto_leave_deduction', 'auto_absent_deduction', 'auto_income_tax', 'prorate_partial_month'}
     with get_db() as conn:
         for key in allowed:
             if key in b:
@@ -807,12 +893,13 @@ def api_salary_item_create():
         return jsonify({'error': '請填寫薪資項目名稱'}), 400
     with get_db() as conn:
         row = conn.execute("""
-            INSERT INTO salary_items (name, item_type, formula, amount, description, color, sort_order, code)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
+            INSERT INTO salary_items (name, item_type, formula, amount, description, color, sort_order, code,
+                                      employer_contribution)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
         """, (b['name'], b.get('item_type','allowance'), b.get('formula',''),
               float(b.get('amount',0)), b.get('description',''),
               b.get('color','#4a7bda'), int(b.get('sort_order',0)),
-              b.get('code',''))).fetchone()
+              b.get('code',''), bool(b.get('employer_contribution', False)))).fetchone()
     return jsonify(salary_item_row(row)), 201
 
 
@@ -825,12 +912,14 @@ def api_salary_item_update(iid):
     with get_db() as conn:
         row = conn.execute("""
             UPDATE salary_items SET name=%s, item_type=%s, formula=%s, amount=%s,
-              description=%s, color=%s, sort_order=%s, active=%s, code=%s
+              description=%s, color=%s, sort_order=%s, active=%s, code=%s,
+              employer_contribution=%s
             WHERE id=%s RETURNING *
         """, (b['name'], b.get('item_type','allowance'), b.get('formula',''),
               float(b.get('amount',0)), b.get('description',''),
               b.get('color','#4a7bda'), int(b.get('sort_order',0)),
-              bool(b.get('active',True)), b.get('code',''), iid)).fetchone()
+              bool(b.get('active',True)), b.get('code',''),
+              bool(b.get('employer_contribution', False)), iid)).fetchone()
     return jsonify(salary_item_row(row)) if row else ('', 404)
 
 
@@ -893,9 +982,13 @@ def api_salary_generate():
         if not locked:
             return jsonify({'error': f'{month} 薪資正在產生中，請稍後再試'}), 409
 
-        staff_list = conn.execute(
-            "SELECT * FROM punch_staff WHERE active=TRUE"
-        ).fetchall()
+        # 在職者 + 當月離職者（最後一個月薪資仍要產生）；尚未到職者不產生
+        _m_last = f"{month}-{__import__('calendar').monthrange(int(month[:4]), int(month[5:7]))[1]:02d}"
+        staff_list = conn.execute("""
+            SELECT * FROM punch_staff
+            WHERE (active=TRUE OR TO_CHAR(terminated_at,'YYYY-MM')=%s)
+              AND (hire_date IS NULL OR hire_date <= %s::date)
+        """, (month, _m_last)).fetchall()
         generated = 0
         skipped   = 0
         for staff in staff_list:
@@ -953,9 +1046,14 @@ def api_salary_preview():
     result = []
     try:
         with get_db() as conn:
-            staff_list = conn.execute(
-                "SELECT * FROM punch_staff WHERE active=TRUE ORDER BY name"
-            ).fetchall()
+            import calendar as _cal_p
+            _m_last_p = f"{month}-{_cal_p.monthrange(int(month[:4]), int(month[5:7]))[1]:02d}"
+            staff_list = conn.execute("""
+                SELECT * FROM punch_staff
+                WHERE (active=TRUE OR TO_CHAR(terminated_at,'YYYY-MM')=%s)
+                  AND (hire_date IS NULL OR hire_date <= %s::date)
+                ORDER BY name
+            """, (month, _m_last_p)).fetchall()
             for staff in staff_list:
                 data = _auto_generate_salary(conn, dict(staff), month)
                 punch_days = conn.execute("""

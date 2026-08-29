@@ -1111,6 +1111,21 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
             </label>
           </div>
 
+          <!-- 到職/離職當月比例計酬 -->
+          <div style="display:flex;align-items:flex-start;gap:16px;padding:12px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg)">
+            <div style="flex:1">
+              <div style="font-size:13px;font-weight:600;color:var(--text)">到職／離職當月按日數比例計酬</div>
+              <div style="font-size:12px;color:var(--muted);margin-top:3px;line-height:1.6">
+                <strong>開啟</strong>：到職或離職當月，底薪與各項加給依在職日數／當月日數比例計算（加班費不比例）。<br>
+                <strong>關閉</strong>：不論在職幾天都給整月全額，由管理員自行調整。
+              </div>
+            </div>
+            <label class="toggle-switch" style="flex-shrink:0;margin-top:2px">
+              <input type="checkbox" id="cfg-prorate" onchange="saveSalaryCalcSetting('prorate_partial_month', this.checked)">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
         </div>
         <div id="sal-cfg-msg" style="font-size:12px;color:var(--green);margin-top:10px;min-height:14px"></div>
       </div>
@@ -2670,6 +2685,14 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <div><label class="form-label">排序</label><input class="form-input" type="number" id="sim-sort" value="0"></div>
         <div><label class="form-label">狀態</label><select class="form-input" id="sim-active"><option value="1">啟用</option><option value="0">停用</option></select></div>
       </div>
+      <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;color:var(--text);margin-top:4px">
+        <input type="checkbox" id="sim-employer" style="margin-top:3px">
+        <span>雇主提繳項目（如勞退6%）
+          <span style="display:block;font-size:11px;color:var(--muted);line-height:1.5">
+            勾選後仍會列在薪資明細，但不計入總支給／應扣、不進扣繳稅起徵點，也不列入到職離職當月的比例計酬基準。
+          </span>
+        </span>
+      </label>
     </div>
     <div class="modal-footer"><button class="btn btn-outline" onclick="closeSalaryItemModal()">取消</button><button class="btn btn-primary" onclick="saveSalaryItem()">儲存</button></div>
   </div>
@@ -6350,6 +6373,7 @@ async function loadSalaryCalcSettings() {
   document.getElementById('cfg-auto-leave').checked  = !!data.auto_leave_deduction;
   document.getElementById('cfg-auto-absent').checked = !!data.auto_absent_deduction;
   document.getElementById('cfg-auto-tax').checked    = !!data.auto_income_tax;
+  document.getElementById('cfg-prorate').checked     = !!data.prorate_partial_month;
 }
 
 async function saveSalaryCalcSetting(key, value) {
@@ -6360,6 +6384,7 @@ async function saveSalaryCalcSetting(key, value) {
     document.getElementById('cfg-auto-leave').checked  = !!data.settings.auto_leave_deduction;
     document.getElementById('cfg-auto-absent').checked = !!data.settings.auto_absent_deduction;
     document.getElementById('cfg-auto-tax').checked    = !!data.settings.auto_income_tax;
+    document.getElementById('cfg-prorate').checked     = !!data.settings.prorate_partial_month;
     msg.textContent = '已儲存。下次產生薪資時生效。';
     msg.style.color = 'var(--green)';
   } else {
@@ -6534,6 +6559,7 @@ function openSalaryItemModal(id=null) {
     document.getElementById('sim-color').value   = it.color||'#4a7bda';
     document.getElementById('sim-sort').value    = it.sort_order||0;
     document.getElementById('sim-active').value  = it.active?'1':'0';
+    document.getElementById('sim-employer').checked = !!it.employer_contribution;
   } else {
     ['sim-name','sim-formula','sim-code'].forEach(i=>document.getElementById(i).value='');
     document.getElementById('sim-type').value='allowance';
@@ -6541,6 +6567,7 @@ function openSalaryItemModal(id=null) {
     document.getElementById('sim-color').value='#4a7bda';
     document.getElementById('sim-sort').value='0';
     document.getElementById('sim-active').value='1';
+    document.getElementById('sim-employer').checked=false;
   }
   document.getElementById('sal-item-modal').style.display='flex';
 }
@@ -6560,6 +6587,7 @@ async function saveSalaryItem() {
     color:      document.getElementById('sim-color').value,
     sort_order: parseInt(document.getElementById('sim-sort').value)||0,
     active:     document.getElementById('sim-active').value==='1',
+    employer_contribution: document.getElementById('sim-employer').checked,
   };
   if (!body.name) { showToast('請填寫項目名稱','error'); return; }
   const {ok} = await api(id?`/api/salary/items/${id}`:'/api/salary/items',{method:id?'PUT':'POST',body:JSON.stringify(body)});
