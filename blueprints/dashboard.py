@@ -1,6 +1,7 @@
 """
 blueprints/dashboard.py — 儀表板、多店管理、勞基法監控、出勤異常偵測
 """
+from collections import defaultdict
 import threading
 from datetime import datetime as _dt, timedelta as _td, timezone as _tz, date as _date
 
@@ -483,7 +484,7 @@ def api_attendance_anomalies():
         """, (date_from, today)).fetchall()
         shift_map = {(r['staff_id'], str(r['date'])): r for r in shift_rows}
         all_staff = conn.execute(
-            "SELECT id, name, role, department FROM punch_staff WHERE active=TRUE"
+            "SELECT id, name, role, department, hire_date FROM punch_staff WHERE active=TRUE"
         ).fetchall()
         # 無排班公司（固定工時）改用打卡設定的固定上下班時間判斷遲到/早退
         _cfg = conn.execute(
@@ -492,11 +493,51 @@ def api_attendance_anomalies():
         fixed_start = (_cfg and _cfg.get('work_start_time')) or '08:00'
         fixed_end   = (_cfg and _cfg.get('work_end_time'))   or '17:00'
         today_punched_ids = {r['staff_id'] for r in rows if str(r['work_date']) == str(today)}
+        leave_range = conn.execute("""
+            SELECT staff_id, start_date, end_date, leave_start_time, leave_end_time
+            FROM leave_requests
+            WHERE status='approved' AND start_date <= %s AND end_date >= %s
+        """, (today, date_from)).fetchall()
+        holiday_today = conn.execute(
+            "SELECT 1 FROM public_holidays WHERE date=%s LIMIT 1", (today,)
+        ).fetchone()
         leave_today = conn.execute("""
             SELECT DISTINCT staff_id FROM leave_requests
             WHERE status='approved' AND start_date <= %s AND end_date >= %s
         """, (today, today)).fetchall()
         on_leave_today_ids = {r['staff_id'] for r in leave_today}
+
+    # 已核准請假：整天假整日不判異常；時段假只把請假時段從應出勤時間扣掉
+    def _hm(t):
+        try:
+            t = str(t)[:5]
+            return int(t[:2]) * 60 + int(t[3:5])
+        except Exception:
+            return None
+
+    full_day_leave  = set()                 # (staff_id, date)
+    partial_leave   = defaultdict(list)     # (staff_id, date) -> [(start_min, end_min)]
+    for lr in leave_range:
+        ls = _hm(lr.get('leave_start_time'))
+        le = _hm(lr.get('leave_end_time'))
+        cur = lr['start_date']
+        while cur <= lr['end_date']:
+            key = (lr['staff_id'], str(cur))
+            # 時段假只在單日假才有意義；跨日假一律視為整天
+            if ls is not None and le is not None and lr['start_date'] == lr['end_date']:
+                partial_leave[key].append((ls, le))
+            else:
+                full_day_leave.add(key)
+            cur += _td(days=1)
+
+    def _effective_window(key, start_min, end_min):
+        """扣掉請假時段後的應出勤區間；完全被假涵蓋回傳 None"""
+        for ls, le in sorted(partial_leave.get(key, [])):
+            if ls <= start_min < le:
+                start_min = max(start_min, le)
+            if ls < end_min <= le:
+                end_min = min(end_min, ls)
+        return None if start_min >= end_min else (start_min, end_min)
 
     anomalies = []
     for r in rows:
@@ -504,6 +545,17 @@ def api_attendance_anomalies():
         has_in  = 'in' in types
         has_out = 'out' in types
         ds      = str(r['work_date'])
+        key = (r['staff_id'], ds)
+        if key in full_day_leave:
+            continue
+        shift = shift_map.get(key)
+        exp_start = str(shift['start_time'])[:5] if (shift and shift['start_time']) else fixed_start
+        exp_end   = str(shift['end_time'])[:5]   if (shift and shift['end_time'])   else fixed_end
+        win = _effective_window(key, _hm(exp_start), _hm(exp_end))
+        if win is None:          # 當日應出勤時間全被請假涵蓋
+            continue
+        expected_start = f'{win[0] // 60:02d}:{win[0] % 60:02d}'
+        expected_end   = f'{win[1] // 60:02d}:{win[1] % 60:02d}'
         if has_in and not has_out and ds != str(today):
             anomalies.append({'type': 'missing_out', 'label': '忘記下班打卡', 'severity': 'warning',
                                'staff_id': r['staff_id'], 'name': r['name'], 'role': r['role'] or '',
@@ -515,8 +567,6 @@ def api_attendance_anomalies():
                                'department': r['department'] or '', 'date': ds,
                                'detail': f"下班 {r['last_out']}，無上班記錄"})
         if has_in and r['first_in']:
-            shift = shift_map.get((r['staff_id'], ds))
-            expected_start = str(shift['start_time'])[:5] if (shift and shift['start_time']) else fixed_start
             try:
                 sh, sm = map(int, expected_start.split(':'))
                 ih, im = map(int, r['first_in'].split(':'))
@@ -529,8 +579,6 @@ def api_attendance_anomalies():
             except Exception:
                 pass
         if has_out and r['last_out'] and ds != str(today):
-            shift = shift_map.get((r['staff_id'], ds))
-            expected_end = str(shift['end_time'])[:5] if (shift and shift['end_time']) else fixed_end
             try:
                 eh, em = map(int, expected_end.split(':'))
                 oh, om = map(int, r['last_out'].split(':'))
@@ -543,7 +591,17 @@ def api_attendance_anomalies():
             except Exception:
                 pass
 
+    # 今日是國定假日 / 週末（且無人排班）就不判未出勤
+    _today_str      = str(today)
+    _has_shift_today = {sid for (sid, d) in shift_map if d == _today_str}
+    _company_off = bool(holiday_today) or today.weekday() >= 5
+
     for s in all_staff:
+        # 尚未到職者不算未出勤
+        if s.get('hire_date') and s['hire_date'] > today:
+            continue
+        if _company_off and s['id'] not in _has_shift_today:
+            continue
         if s['id'] not in today_punched_ids and s['id'] not in on_leave_today_ids:
             anomalies.append({'type': 'absent', 'label': '今日未出勤', 'severity': 'error',
                                'staff_id': s['id'], 'name': s['name'], 'role': s['role'] or '',

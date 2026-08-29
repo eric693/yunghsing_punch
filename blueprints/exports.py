@@ -257,6 +257,32 @@ def api_export_attendance_summary():
     return _xl_response(wb, f'attendance_summary_{month}.xlsx')
 
 
+def _fixed_hours_missing_days(staff_rows, holiday_set, punched_set, leave_set,
+                              shift_staff_ids, y, mo, today):
+    """無排班（固定工時）員工：平日扣國定假日，未打卡也沒請假 → 未打卡。
+    回傳 [(staff_name, department, date_str)]，只含今天以前、在職區間內的日子。"""
+    import calendar as _cal_f
+    out = []
+    days = _cal_f.monthrange(y, mo)[1]
+    for st in staff_rows:
+        if st['id'] in shift_staff_ids:      # 有排班者由排班邏輯處理
+            continue
+        hire = st.get('hire_date')
+        term = st.get('terminated_at')
+        term = term.date() if hasattr(term, 'date') else term
+        for dnum in range(1, days + 1):
+            d  = _date(y, mo, dnum)
+            ds = d.isoformat()
+            if d >= today or d.weekday() >= 5 or ds in holiday_set:
+                continue
+            if hire and d < hire:            continue
+            if term and d > term:            continue
+            if (st['id'], ds) in punched_set: continue
+            if (st['id'], ds) in leave_set:   continue
+            out.append((st['name'], st['department'] or '', ds))
+    return out
+
+
 @bp.route('/api/attendance/anomaly-report', methods=['GET'])
 @require_module('punch')
 def api_anomaly_report_excel():
@@ -288,6 +314,7 @@ def api_anomaly_report_excel():
             FROM shift_assignments sa JOIN shift_types st ON st.id=sa.shift_type_id
             JOIN punch_staff ps ON ps.id=sa.staff_id AND ps.active=TRUE
             WHERE TO_CHAR(sa.shift_date,'YYYY-MM')=%s
+              AND (ps.hire_date IS NULL OR sa.shift_date >= ps.hire_date)
         """, (month,)).fetchall()
         first_day = f"{y}-{mo:02d}-01"
         last_day  = f"{y}-{mo:02d}-{_cal.monthrange(y, mo)[1]:02d}"
@@ -295,6 +322,14 @@ def api_anomaly_report_excel():
             SELECT staff_id, start_date, end_date FROM leave_requests
             WHERE status='approved' AND start_date <= %s AND end_date >= %s
         """, (last_day, first_day)).fetchall()
+        staff_rows = conn.execute("""
+            SELECT id, name, department, hire_date, terminated_at
+            FROM punch_staff
+            WHERE active=TRUE OR TO_CHAR(terminated_at,'YYYY-MM')=%s
+        """, (month,)).fetchall()
+        holiday_rows = conn.execute(
+            "SELECT date FROM public_holidays WHERE TO_CHAR(date,'YYYY-MM')=%s", (month,)
+        ).fetchall()
         _cfg = conn.execute(
             "SELECT work_start_time, work_end_time FROM punch_config WHERE id=1"
         ).fetchone()
@@ -316,6 +351,8 @@ def api_anomaly_report_excel():
     anomalies = []
     for r in punch_rows:
         ds = str(r['work_date']); sid = r['staff_id']
+        if (sid, ds) in leave_set:   # 已核准請假當日不列異常
+            continue
         shift = shift_map.get((sid, ds))
         anomaly_type = ''; detail = ''
         if not r['has_in'] and r['has_out']:
@@ -359,6 +396,16 @@ def api_anomaly_report_excel():
             'shift_start': str(sr['start_time'])[:5], 'shift_end': str(sr['end_time'])[:5],
             'clock_in': '—', 'clock_out': '—', 'anomaly_type': '未打卡',
             'detail': f"排班 {str(sr['start_time'])[:5]}～{str(sr['end_time'])[:5]}，整日無打卡記錄",
+        })
+    holiday_set     = {str(r['date']) for r in holiday_rows}
+    shift_staff_ids = {r['staff_id'] for r in shift_rows}
+    for nm, dept, ds in _fixed_hours_missing_days(
+            staff_rows, holiday_set, punched_set, leave_set, shift_staff_ids, y, mo, today):
+        anomalies.append({
+            'staff_name': nm, 'department': dept, 'date': ds,
+            'shift_start': fixed_start, 'shift_end': fixed_end,
+            'clock_in': '—', 'clock_out': '—', 'anomaly_type': '未打卡',
+            'detail': f"固定工時 {fixed_start}～{fixed_end}，整日無打卡記錄",
         })
     anomalies.sort(key=lambda x: (x['date'], x['staff_name']))
 
@@ -826,6 +873,7 @@ def api_anomaly_report_pdf():
             FROM shift_assignments sa JOIN shift_types st ON st.id=sa.shift_type_id
             JOIN punch_staff ps ON ps.id=sa.staff_id AND ps.active=TRUE
             WHERE TO_CHAR(sa.shift_date,'YYYY-MM')=%s
+              AND (ps.hire_date IS NULL OR sa.shift_date >= ps.hire_date)
         """, (month,)).fetchall()
         first_day = f"{y}-{mo:02d}-01"
         last_day  = f"{y}-{mo:02d}-{_cal.monthrange(y, mo)[1]:02d}"
@@ -833,6 +881,14 @@ def api_anomaly_report_pdf():
             SELECT staff_id, start_date, end_date FROM leave_requests
             WHERE status='approved' AND start_date <= %s AND end_date >= %s
         """, (last_day, first_day)).fetchall()
+        staff_rows = conn.execute("""
+            SELECT id, name, department, hire_date, terminated_at
+            FROM punch_staff
+            WHERE active=TRUE OR TO_CHAR(terminated_at,'YYYY-MM')=%s
+        """, (month,)).fetchall()
+        holiday_rows = conn.execute(
+            "SELECT date FROM public_holidays WHERE TO_CHAR(date,'YYYY-MM')=%s", (month,)
+        ).fetchall()
         _cfg = conn.execute(
             "SELECT work_start_time, work_end_time FROM punch_config WHERE id=1"
         ).fetchone()
@@ -850,6 +906,8 @@ def api_anomaly_report_pdf():
     anomalies = []
     for r in punch_rows:
         ds = str(r['work_date']); sid = r['staff_id']
+        if (sid, ds) in leave_set:   # 已核准請假當日不列異常
+            continue
         shift = shift_map.get((sid, ds))
         anomaly_type = ''; detail = ''
         if not r['has_in'] and r['has_out']:
@@ -889,6 +947,12 @@ def api_anomaly_report_pdf():
         anomalies.append([sr['staff_name'], sr['department'] or '', ds,
                           str(sr['start_time'])[:5], str(sr['end_time'])[:5],
                           '—', '—', '未打卡', f"排班{str(sr['start_time'])[:5]}~{str(sr['end_time'])[:5]}"])
+    holiday_set     = {str(r['date']) for r in holiday_rows}
+    shift_staff_ids = {r['staff_id'] for r in shift_rows}
+    for nm, dept, ds in _fixed_hours_missing_days(
+            staff_rows, holiday_set, punched_set, leave_set, shift_staff_ids, y, mo, today):
+        anomalies.append([nm, dept, ds, fixed_start, fixed_end, '—', '—', '未打卡',
+                          f'固定工時{fixed_start}~{fixed_end}，整日無打卡'])
     anomalies.sort(key=lambda x: (x[2], x[0]))
     headers    = ['姓名', '部門', '日期', '應上班', '應下班', '實際上班', '實際下班', '異常類型', '說明']
     col_widths = [55, 55, 65, 45, 45, 50, 50, 55, 120]

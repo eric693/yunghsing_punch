@@ -691,6 +691,8 @@ def api_punch_summary():
 @require_module('punch')
 def api_attendance_monthly_stats():
     month = request.args.get('month') or _dt.now(TW_TZ).strftime('%Y-%m')
+    import calendar as _cal_ms
+    _month_last_ms = f"{month}-{_cal_ms.monthrange(int(month[:4]), int(month[5:7]))[1]:02d}"
     with get_db() as conn:
         rows = conn.execute("""
             SELECT ps.id as staff_id, ps.name as staff_name,
@@ -716,8 +718,42 @@ def api_attendance_monthly_stats():
         """, (month,)).fetchall()
         shift_map = {(r['staff_id'], str(r['date'])): r for r in shift_rows}
 
+        # 無排班（固定工時公司）用打卡設定的固定上下班時間判遲到／早退
+        _cfg_ms = conn.execute(
+            "SELECT work_start_time, work_end_time FROM punch_config WHERE id=1"
+        ).fetchone()
+        fixed_start_ms = (_cfg_ms and _cfg_ms.get('work_start_time')) or '08:00'
+        fixed_end_ms   = (_cfg_ms and _cfg_ms.get('work_end_time'))   or '17:00'
+        # 已核准請假的日期不計遲到／早退／缺卡
+        _lv_ms = conn.execute("""
+            SELECT staff_id, start_date, end_date FROM leave_requests
+            WHERE status='approved'
+              AND start_date <= %s::date AND end_date >= %s::date
+        """, (_month_last_ms, f'{month}-01')).fetchall()
+        # 休息時段（break_out / break_in）用來扣除工時
+        _brk_ms = conn.execute("""
+            SELECT staff_id, punch_type, punched_at AT TIME ZONE 'Asia/Taipei' AS pt
+            FROM punch_records
+            WHERE punch_type IN ('break_out','break_in')
+              AND TO_CHAR(punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM') = %s
+            ORDER BY punched_at
+        """, (month,)).fetchall()
+
     rows = [dict(r) for r in rows]
-    from datetime import timedelta as _td_cm
+    from datetime import timedelta as _td_cm, date as _date_cm
+
+    on_leave_ms = set()
+    for _lv in _lv_ms:
+        _c = _lv['start_date']
+        while _c <= _lv['end_date']:
+            on_leave_ms.add((_lv['staff_id'], _c.isoformat()))
+            _c += _td_cm(days=1)
+
+    from collections import defaultdict as _dd_ms
+    break_map = _dd_ms(list)   # (staff_id, date) -> [(type, dt)]
+    for _b in _brk_ms:
+        break_map[(_b['staff_id'], _b['pt'].date().isoformat())].append((_b['punch_type'], _b['pt']))
+
     rows.sort(key=lambda x: (x['staff_id'], x['work_date']))
     merged_rows = []
     skip_cm = set()
@@ -762,8 +798,20 @@ def api_attendance_monthly_stats():
 
         if r['clock_in'] and r['clock_out']:
             diff = (r['clock_out'] - r['clock_in']).total_seconds() / 60
+            # 扣除休息時段，與薪資工時計算一致
+            _bs = sorted(break_map.get((sid, ds), []), key=lambda x: x[1])
+            _open = None
+            for _bt, _bdt in _bs:
+                if _bt == 'break_out' and _open is None:
+                    _open = _bdt
+                elif _bt == 'break_in' and _open is not None:
+                    diff -= (_bdt - _open).total_seconds() / 60
+                    _open = None
             if diff > 0:
                 s['total_minutes'] += int(diff)
+
+        if (sid, ds) in on_leave_ms:      # 當日已請假，不列異常
+            continue
 
         if has_in and not has_out:
             s['missing_out_count'] += 1
@@ -774,9 +822,10 @@ def api_attendance_monthly_stats():
 
         if has_in and r['clock_in']:
             shift = shift_map.get((sid, ds))
-            if shift and shift['start_time']:
+            _exp_start = str(shift['start_time'])[:5] if (shift and shift['start_time']) else fixed_start_ms
+            if _exp_start:
                 try:
-                    sh, sm = map(int, str(shift['start_time'])[:5].split(':'))
+                    sh, sm = map(int, _exp_start.split(':'))
                     ci_local = r['clock_in']
                     ih, im   = ci_local.hour, ci_local.minute
                     late_mins = (ih * 60 + im) - (sh * 60 + sm)
@@ -789,9 +838,10 @@ def api_attendance_monthly_stats():
 
         if has_out and r['clock_out']:
             shift = shift_map.get((sid, ds))
-            if shift and shift['end_time']:
+            _exp_end = str(shift['end_time'])[:5] if (shift and shift['end_time']) else fixed_end_ms
+            if _exp_end:
                 try:
-                    eh, em = map(int, str(shift['end_time'])[:5].split(':'))
+                    eh, em = map(int, _exp_end.split(':'))
                     co_local = r['clock_out']
                     oh, om   = co_local.hour, co_local.minute
                     early_mins = (eh * 60 + em) - (oh * 60 + om)

@@ -4,7 +4,7 @@ blueprints/mobile.py — Mobile App JWT API (/api/mobile/*)
 import json as _json
 import math
 from collections import defaultdict
-from datetime import datetime as _dt, date
+from datetime import datetime as _dt, date, timedelta
 
 import jwt as _pyjwt
 from flask import Blueprint, request, jsonify, g
@@ -730,7 +730,7 @@ def mobile_admin_anomalies():
         return jsonify({'error': '月份格式錯誤'}), 400
     with get_db() as conn:
         staff_all = conn.execute(
-            "SELECT id, name, department FROM punch_staff WHERE active=TRUE ORDER BY name"
+            "SELECT id, name, department, hire_date FROM punch_staff WHERE active=TRUE ORDER BY name"
         ).fetchall()
         records = conn.execute(
             """SELECT staff_id, punch_type, (punched_at AT TIME ZONE 'Asia/Taipei')::date AS day
@@ -747,6 +747,11 @@ def mobile_admin_anomalies():
         holiday_rows = conn.execute(
             "SELECT date FROM public_holidays WHERE TO_CHAR(date,'YYYY-MM')=%s"
         , (month,)).fetchall()
+        leave_rows = conn.execute(
+            """SELECT staff_id, start_date, end_date FROM leave_requests
+               WHERE status='approved' AND start_date <= %s AND end_date >= %s""",
+            (f'{y}-{m:02d}-{calendar.monthrange(y, m)[1]}', f'{y}-{m:02d}-01')
+        ).fetchall()
     by_staff = defaultdict(set)
     for r in records:
         by_staff[r['staff_id']].add(str(r['day']))
@@ -756,19 +761,35 @@ def mobile_admin_anomalies():
     holiday_dates = {str(r['date']) for r in holiday_rows}
     today = _dt.now(TW_TZ).date()
     last = min(today, date(y, m, calendar.monthrange(y, m)[1]))
-    default_expected = 0
-    if last >= date(y, m, 1):
+    def _default_expected(hire_date=None):
+        n = 0
+        if last < date(y, m, 1):
+            return 0
         for dnum in range(1, last.day + 1):
             d = date(y, m, dnum)
+            if hire_date and d < hire_date:      # 到職日前不列入預期工作天
+                continue
             if d.weekday() < 5 and d.isoformat() not in holiday_dates:
-                default_expected += 1
+                n += 1
+        return n
+
+    # 已核准請假的日子不算缺勤
+    leave_by_staff = defaultdict(set)
+    for lr in leave_rows:
+        cur = lr['start_date']
+        while cur <= lr['end_date']:
+            if cur.year == y and cur.month == m:
+                leave_by_staff[lr['staff_id']].add(cur.isoformat())
+            cur += timedelta(days=1)
 
     result = []
     for s in staff_all:
+        hd = s.get('hire_date')
         work_days = len(by_staff[s['id']])
-        expected  = expected_by_staff.get(s['id'], default_expected)
+        expected  = expected_by_staff.get(s['id'], _default_expected(hd))
+        leave_days = len(leave_by_staff.get(s['id'], ()))
         result.append({
             'id': s['id'], 'name': s['name'], 'department': s['department'],
-            'work_days': work_days, 'missing_days': max(0, expected - work_days),
+            'work_days': work_days, 'missing_days': max(0, expected - work_days - leave_days),
         })
     return jsonify(result)
