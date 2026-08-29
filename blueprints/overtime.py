@@ -37,9 +37,10 @@ def _calc_ot_pay(staff_row, ot_hours, day_type='weekday'):
     if day_type in ('holiday', 'special'):
         pay = round(base_hourly * h * 2.0, 0)
     elif day_type == 'rest_day':
-        billed = max(h, 4.0)
-        h1 = min(billed, 2.0); h2 = min(max(0.0, billed - 2.0), 2.0); h3 = max(0.0, billed - 4.0)
-        pay = round(base_hourly * (h1 * ot_rate1 + h2 * ot_rate2 + h3 * ot_rate3), 0)
+        # 休息日：2018/3/1 起核實計算（不再「做4給4」）；
+        # 前 2 小時 1⅓，第 3 小時起 1⅔
+        h1 = min(h, 2.0); h2 = max(0.0, h - 2.0)
+        pay = round(base_hourly * (h1 * ot_rate1 + h2 * ot_rate2), 0)
     else:
         h1 = min(h, 2.0); h2 = min(max(0.0, h - 2.0), 2.0); h3 = max(0.0, h - 4.0)
         pay = round(base_hourly * (h1 * ot_rate1 + h2 * ot_rate2 + h3 * ot_rate3), 0)

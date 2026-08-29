@@ -453,13 +453,15 @@ def api_leave_request_review(rid):
                     VALUES (%s, %s, %s, 0, 0) ON CONFLICT (staff_id, leave_type_id, year) DO NOTHING
                 """, (old['staff_id'], old['leave_type_id'], int(year)))
                 bal = conn.execute("""
-                    SELECT COALESCE(used_days, 0) as used
+                    SELECT COALESCE(used_days, 0) as used, COALESCE(total_days, 0) as total
                     FROM leave_balances WHERE staff_id=%s AND leave_type_id=%s AND year=%s
                     FOR UPDATE
                 """, (old['staff_id'], old['leave_type_id'], int(year))).fetchone()
                 used = float(bal['used']) if bal else 0.0
-                if used + delta > float(lt['max_days']):
-                    remaining = float(lt['max_days']) - used
+                _personal = float(bal['total']) if bal else 0.0
+                _cap = _personal if _personal > 0 else float(lt['max_days'])
+                if used + delta > _cap:
+                    remaining = _cap - used
                     return jsonify({'error': f'{lt["name"]}餘額不足（剩 {remaining} 天），無法核准'}), 422
         row = conn.execute("""
             UPDATE leave_requests
@@ -588,12 +590,15 @@ def api_leave_submit():
                 VALUES (%s, %s, %s, 0, 0) ON CONFLICT (staff_id, leave_type_id, year) DO NOTHING
             """, (sid, leave_type_id, int(year)))
             bal = conn.execute("""
-                SELECT COALESCE(used_days, 0) as used
+                SELECT COALESCE(used_days, 0) as used, COALESCE(total_days, 0) as total
                 FROM leave_balances WHERE staff_id=%s AND leave_type_id=%s AND year=%s FOR UPDATE
             """, (sid, leave_type_id, int(year))).fetchone()
             used = float(bal['used']) if bal else 0.0
-            if used + total_days > float(lt['max_days']):
-                remaining = float(lt['max_days']) - used
+            # 個人額度（如特休依到職日計算）優先於假別的通用上限
+            _personal = float(bal['total']) if bal else 0.0
+            _cap = _personal if _personal > 0 else float(lt['max_days'])
+            if used + total_days > _cap:
+                remaining = _cap - used
                 if total_hours_req:
                     rem_hours = round(remaining * 8, 1)
                     return jsonify({'error': f'{lt["name"]}剩餘 {rem_hours} 小時，無法申請 {total_hours_req} 小時'}), 422
