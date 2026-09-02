@@ -980,7 +980,10 @@ def api_punch_req_review(rid):
 @require_module('punch')
 def api_punch_staff_terminate(sid):
     b = request.get_json(force=True) or {}
-    terminated_at = b.get('terminated_at') or _dt.now(TW_TZ).strftime('%Y-%m-%d')
+    # 前端送的是 termination_date，兩種鍵都收，否則管理員選的離職日會被忽略、
+    # 一律被記成「今天」。
+    terminated_at = (b.get('terminated_at') or b.get('termination_date')
+                     or _dt.now(TW_TZ).strftime('%Y-%m-%d'))
     reason        = b.get('reason', '').strip()
     with get_db() as conn:
         row = conn.execute("""

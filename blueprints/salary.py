@@ -943,7 +943,8 @@ def api_salary_records_list():
     with get_db() as conn:
         rows = conn.execute("""
             SELECT sr.*, ps.name as staff_name, ps.role as staff_role,
-                   ps.employee_code, ps.department, ps.active, ps.terminated_at
+                   ps.employee_code, ps.department, ps.active, ps.terminated_at,
+                   ps.salary_type
             FROM salary_records sr
             JOIN punch_staff ps ON ps.id=sr.staff_id
             WHERE sr.month=%s
@@ -958,6 +959,7 @@ def api_salary_records_list():
         d['department']    = r['department'] or ''
         d['staff_active']  = bool(r['active'])
         d['terminated_at'] = str(r['terminated_at']) if r['terminated_at'] else ''
+        d['salary_type']   = r['salary_type'] or 'monthly'   # 前端據此顯示時薪/月薪
         result.append(d)
     return jsonify(result)
 

@@ -10150,7 +10150,7 @@ function renderResignedStaff() {
     <td>${escHtml(s.department||'')}</td>
     <td>${escHtml(s.role||'')}</td>
     <td style="font-family:'DM Mono',monospace">${s.hire_date||'—'}</td>
-    <td style="font-family:'DM Mono',monospace;color:var(--red)">${s.termination_date||'—'}</td>
+    <td style="font-family:'DM Mono',monospace;color:var(--red)">${s.terminated_at||'—'}</td>
     <td style="font-size:12px;color:var(--muted)">${escHtml(s.termination_reason||'')}</td>
     <td><button class="btn btn-outline btn-sm" onclick="reinstateStaff(${s.id},'${escHtml(s.name)}')">復職</button></td>
   </tr>`).join('');
