@@ -860,6 +860,7 @@ def api_attendance_monthly_stats():
         s['total_hours']   = round(s['total_minutes'] / 60, 1)
         s['avg_hours_day'] = avg
         s['total_hm']      = f"{h}h {m:02d}m"
+        s['name']          = s['staff_name']   # 前端月統計表格與 Excel 匯出讀 name
         result.append(s)
     return jsonify({'month': month, 'stats': result})
 
