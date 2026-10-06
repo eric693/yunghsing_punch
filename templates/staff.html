@@ -1736,7 +1736,7 @@ function previewLeaveStaff() {
   let days = 0;
   let cur  = new Date(start);
   while (cur <= end) {
-    if (cur.getDay() !== 0) {  // 排除週日
+    if (cur.getDay() !== 0 && cur.getDay() !== 6) {  // 排除週末
       const isFirst = cur.getTime() === start.getTime();
       const isLast  = cur.getTime() === end.getTime();
       if (isFirst && sh) days += 0.5;
@@ -1745,7 +1745,7 @@ function previewLeaveStaff() {
     }
     cur.setDate(cur.getDate() + 1);
   }
-  preview.textContent = `預計請假：${days} 天（已排除週日）`;
+  preview.textContent = `預計請假：${days} 天（已排除週末）`;
   // 檢查餘額
   const sel = document.getElementById('leave-type-sel');
   if (!sel.value) return;

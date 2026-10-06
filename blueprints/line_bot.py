@@ -552,7 +552,7 @@ def _line_submit_leave(staff, user_id, text):
         date_items = []
         for i in range(7):
             d = today + _tdlv(days=i)
-            if d.weekday() == 6:
+            if d.weekday() >= 5:   # 週末非工作日（與請假天數計算一致）
                 continue
             label = ('今天 ' if i == 0 else '明天 ' if i == 1 else '') + f'{d.strftime("%m/%d")}({WDAY_LV[d.weekday()]})'
             date_items.append({'label': label, 'text': f'請假 {leave_type_name} {d.isoformat()}'})
@@ -640,10 +640,11 @@ def _line_submit_leave(staff, user_id, text):
         elif _re_lv.match(r'^\d{4}-\d{2}-\d{2}$', tok):
             date_str2 = tok
 
+    # 與後台/員工端語意一致：start_half = 開始日請「下午」、end_half = 結束日請「上午」
     if period_token == '上午':
-        start_half = True; end_half = True
+        end_half = True
     elif period_token == '下午':
-        start_half = False; end_half = True
+        start_half = True
 
     reason = '（LINE 請假）'
 
@@ -688,11 +689,12 @@ def _line_submit_leave(staff, user_id, text):
             total_hours_val = round(leave_minutes / 60, 2)
             days = round(total_hours_val / daily_hours, 2)
         else:
-            s = _dlv.fromisoformat(date_str1); e = _dlv.fromisoformat(date_str2)
-            days = sum(1 for i in range((e - s).days + 1)
-                       if (s + _tdlv(days=i)).weekday() != 6)
-            if start_half or end_half:
-                days = max(0.5, days - 0.5)
+            # 與後台/薪資同一套工作日定義（週一～五、排除國定假日），否則後台編輯重算會變
+            from blueprints.leave import _calc_leave_days
+            days = _calc_leave_days(date_str1, date_str2, start_half, end_half)
+            if days <= 0:
+                _send_line_punch(user_id, f'{date_str1} 不是工作日（週末或國定假日），不需請假。')
+                return
 
         remain = None
         if lt['max_days'] is not None:
@@ -715,9 +717,9 @@ def _line_submit_leave(staff, user_id, text):
 
     if leave_start_time and leave_end_time:
         period_label = f'（{leave_start_time} ～ {leave_end_time}）'
-    elif start_half and end_half and date_str1 == date_str2:
-        period_label = '（上午半天）'
     elif end_half and not start_half and date_str1 == date_str2:
+        period_label = '（上午半天）'
+    elif start_half and not end_half and date_str1 == date_str2:
         period_label = '（下午半天）'
     else:
         period_label = ''
