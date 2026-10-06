@@ -108,6 +108,16 @@ init_leave_db()
 
 # ─── Row helpers ─────────────────────────────────────────────────────────────
 
+def add_month_range_conds(conds, params, args):
+    """from_month / to_month（YYYY-MM，含頭含尾）→ 以請假開始日篩選"""
+    import re as _re
+    f = args.get('from_month', ''); t = args.get('to_month', '')
+    if _re.fullmatch(r'\d{4}-\d{2}', f or ''):
+        conds.append("lr.start_date >= %s::date"); params.append(f + '-01')
+    if _re.fullmatch(r'\d{4}-\d{2}', t or ''):
+        conds.append("lr.start_date < (%s::date + INTERVAL '1 month')"); params.append(t + '-01')
+
+
 def leave_type_row(row):
     if not row: return None
     d = dict(row)
@@ -337,6 +347,7 @@ def api_leave_requests_list():
     if status:   conds.append('lr.status=%s');                        params.append(status)
     if staff_id: conds.append('lr.staff_id=%s');                      params.append(int(staff_id))
     if month:    conds.append("to_char(lr.start_date,'YYYY-MM')=%s"); params.append(month)
+    add_month_range_conds(conds, params, request.args)
     with get_db() as conn:
         rows = conn.execute(f"""
             SELECT lr.*, ps.name as staff_name, ps.role as staff_role,
@@ -346,7 +357,7 @@ def api_leave_requests_list():
             JOIN punch_staff ps ON ps.id=lr.staff_id
             JOIN leave_types  lt ON lt.id=lr.leave_type_id
             WHERE {' AND '.join(conds)}
-            ORDER BY lr.start_date DESC, lr.created_at DESC LIMIT 300
+            ORDER BY lr.start_date DESC, lr.created_at DESC LIMIT 2000
         """, params).fetchall()
     result = []
     for r in rows:
@@ -375,6 +386,9 @@ def api_leave_request_admin_create():
     reason        = b.get('reason', '').strip()
     status        = b.get('status', 'approved')
     document_id   = b.get('document_id') or None
+    # 後台「編輯」：新單建立成功才刪舊單（同一交易），避免驗證失敗時舊單已被刪掉
+    try:    replace_id = int(b.get('replace_id') or 0) or None
+    except (TypeError, ValueError): replace_id = None
 
     if not all([sid, leave_type_id, start_date, end_date]):
         return jsonify({'error': '缺少必要欄位'}), 400
@@ -399,15 +413,23 @@ def api_leave_request_admin_create():
         lt_row = conn.execute("SELECT require_cert FROM leave_types WHERE id=%s", (leave_type_id,)).fetchone()
         if lt_row and lt_row['require_cert'] and status == 'approved' and not document_id:
             return jsonify({'error': '此假別需要上傳病單/證明才能直接核准'}), 422
+        old = None
+        if replace_id:
+            old = conn.execute("SELECT * FROM leave_requests WHERE id=%s", (replace_id,)).fetchone()
+            if not old:
+                return jsonify({'error': '原假單已不存在，請重新整理'}), 404
         overlap = conn.execute("""
             SELECT start_date, end_date FROM leave_requests
             WHERE staff_id=%s AND status IN ('pending','approved')
               AND start_date <= %s AND end_date >= %s
               AND (total_hours IS NULL OR %s)
+              AND id <> %s
             LIMIT 1
-        """, (sid, end_date, start_date, total_hours_req is None)).fetchone()
+        """, (sid, end_date, start_date, total_hours_req is None, replace_id or 0)).fetchone()
         if overlap:
             return jsonify({'error': f"該期間與現有假單（{overlap['start_date']}～{overlap['end_date']}，待審或已核准）重疊"}), 409
+        if old:
+            _remove_leave_request(conn, old)
         row = conn.execute("""
             INSERT INTO leave_requests
               (staff_id, leave_type_id, start_date, end_date, start_half, end_half,
@@ -497,16 +519,21 @@ def api_leave_request_delete(rid):
         old = conn.execute("SELECT * FROM leave_requests WHERE id=%s", (rid,)).fetchone()
         if not old:
             return jsonify({'error': '找不到假單'}), 404
-        if old['status'] == 'approved':
-            _update_leave_balance(conn, old['staff_id'], old['leave_type_id'],
-                                  str(old['start_date'])[:4], -float(old['total_days']))
-            affected_months = {str(old['start_date'])[:7], str(old['end_date'])[:7]}
-            for _m in affected_months:
-                conn.execute("""
-                    DELETE FROM salary_records WHERE staff_id=%s AND month=%s AND status='draft'
-                """, (old['staff_id'], _m))
-        conn.execute("DELETE FROM leave_requests WHERE id=%s", (rid,))
+        _remove_leave_request(conn, old)
     return jsonify({'deleted': rid})
+
+
+def _remove_leave_request(conn, old):
+    """刪除假單；已核准者退回餘額並清掉受影響月份的薪資草稿"""
+    if old['status'] == 'approved':
+        _update_leave_balance(conn, old['staff_id'], old['leave_type_id'],
+                              str(old['start_date'])[:4], -float(old['total_days']))
+        affected_months = {str(old['start_date'])[:7], str(old['end_date'])[:7]}
+        for _m in affected_months:
+            conn.execute("""
+                DELETE FROM salary_records WHERE staff_id=%s AND month=%s AND status='draft'
+            """, (old['staff_id'], _m))
+    conn.execute("DELETE FROM leave_requests WHERE id=%s", (old['id'],))
 
 
 # ─── Employee: submit leave request ──────────────────────────────────────────

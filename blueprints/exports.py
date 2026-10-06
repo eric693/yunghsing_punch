@@ -12,6 +12,7 @@ from config import TW_TZ
 def _tw_today():
     return _dt.now(TW_TZ).date()
 from db import get_db
+from blueprints.leave import add_month_range_conds
 
 bp = Blueprint('exports', __name__)
 
@@ -526,6 +527,13 @@ def _xl_salary_item_sheet(wb, rows, month):
 
 # ── Leave Export ───────────────────────────────────────────────────
 
+def _leave_label(month, year):
+    f = request.args.get('from_month', ''); t = request.args.get('to_month', '')
+    if f or t:
+        return f"{f or '起'}_{t or '今'}"
+    return month or year or 'all'
+
+
 @bp.route('/api/export/leave', methods=['GET'])
 @require_module('leave')
 def api_export_leave():
@@ -536,6 +544,7 @@ def api_export_leave():
     if month:    conds.append("to_char(lr.start_date,'YYYY-MM')=%s");        params.append(month)
     if year:     conds.append("EXTRACT(YEAR FROM lr.start_date)=%s");         params.append(int(year))
     if staff_id: conds.append("lr.staff_id=%s");                             params.append(int(staff_id))
+    add_month_range_conds(conds, params, request.args)
     with get_db() as conn:
         rows = conn.execute(f"""
             SELECT lr.*, ps.name as staff_name, ps.employee_code, ps.department,
@@ -557,7 +566,7 @@ def api_export_leave():
          r['reason'] or '', r['substitute_name'] or '', STATUS_LABEL.get(r['status'], r['status'])]
         for r in rows
     ], len(headers), number_cols={8})
-    return _xl_response(wb, f'leave_{month or year or "all"}.xlsx')
+    return _xl_response(wb, f'leave_{_leave_label(month, year)}.xlsx')
 
 
 # ── Overtime Export ────────────────────────────────────────────────
@@ -998,6 +1007,7 @@ def api_export_leave_pdf():
     if month:    conds.append("to_char(lr.start_date,'YYYY-MM')=%s");     params.append(month)
     if year:     conds.append("EXTRACT(YEAR FROM lr.start_date)=%s");      params.append(int(year))
     if staff_id: conds.append("lr.staff_id=%s");                          params.append(int(staff_id))
+    add_month_range_conds(conds, params, request.args)
     with get_db() as conn:
         rows = conn.execute(f"""
             SELECT lr.*, ps.name as staff_name, ps.employee_code, ps.department,
@@ -1016,7 +1026,7 @@ def api_export_leave_pdf():
              r['reason'] or '', r['substitute_name'] or '',
              STATUS_LABEL.get(r['status'], r['status'])]
             for r in rows]
-    label = month or year or 'all'
+    label = _leave_label(month, year)
     buf = _build_pdf(f'{label} 請假記錄', f'製表：{_tw_today().isoformat()}  共 {len(data)} 筆',
                      headers, col_widths, data, landscape=True)
     return _pdf_response(buf, f'leave_{label}.pdf')

@@ -923,8 +923,10 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     <!-- 請假申請 -->
     <div id="leave-panel-requests">
       <div class="filter-bar" style="margin-bottom:20px;gap:12px;flex-wrap:wrap">
-        <span class="filter-label">月份</span>
-        <input class="filter-input" type="month" id="leave-req-month" onchange="loadLeaveRequests()">
+        <span class="filter-label">期間</span>
+        <input class="filter-input" type="month" id="leave-req-from" onchange="loadLeaveRequests()" title="起始月份（留空＝不限）">
+        <span style="color:var(--muted)">～</span>
+        <input class="filter-input" type="month" id="leave-req-to" onchange="loadLeaveRequests()" title="結束月份（留空＝不限）">
         <div class="filter-divider"></div>
         <span class="filter-label">狀態</span>
         <select class="filter-input" id="leave-req-status" onchange="loadLeaveRequests()" style="min-width:110px">
@@ -947,6 +949,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <button class="btn btn-primary btn-sm" id="leave-batch-approve" style="display:none" onclick="batchReview('leave','approve')">批次核准</button>
         <button class="btn btn-danger btn-sm"  id="leave-batch-reject"  style="display:none" onclick="batchReview('leave','reject')">批次退回</button>
       </div>
+      <div id="leave-req-summary" style="display:none;margin-bottom:14px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-size:13px;color:var(--text);flex-wrap:wrap;gap:6px 14px;align-items:center"></div>
       <div id="leave-pending-hint" style="display:none;margin-bottom:14px;padding:10px 14px;background:#fffbeb;border:1.5px solid #e07b2a;border-radius:10px;font-size:13px;color:#9a5b14;align-items:center;gap:10px;flex-wrap:wrap"></div>
       <div id="leave-req-list"></div>
     </div>
@@ -5397,13 +5400,14 @@ let leaveReviewId=null;
 function initLeave() {
   const now = new Date();
   const ym  = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
-  if (!document.getElementById('leave-req-month').value) document.getElementById('leave-req-month').value = ym;
+  if (!document.getElementById('leave-req-from').value) document.getElementById('leave-req-from').value = ym;
+  if (!document.getElementById('leave-req-to').value)   document.getElementById('leave-req-to').value   = ym;
   if (!document.getElementById('leave-cal-month').value) document.getElementById('leave-cal-month').value = ym;
-  _restoreFilters('leave-req', { lr_month:'leave-req-month', lr_status:'leave-req-status', lr_staff:'leave-req-staff' });
+  _restoreFilters('leave-req', { lr_from:'leave-req-from', lr_to:'leave-req-to', lr_status:'leave-req-status', lr_staff:'leave-req-staff' });
   const yr = document.getElementById('leave-bal-year');
   if (!yr.options.length) {
     const y = now.getFullYear();
-    for (let i = y+1; i >= y-2; i--) yr.add(new Object({text:i+'年',value:i}));
+    for (let i = y+1; i >= y-2; i--) yr.add(new Option(i+'年', i));
     yr.value = y;
   }
   switchLeaveTab('requests');
@@ -5414,7 +5418,7 @@ function switchLeaveTab(tab) {
     document.getElementById('leavetab-'+t).classList.toggle('active', t===tab);
     document.getElementById('leave-panel-'+t).style.display = t===tab?'':'none';
   });
-  if (tab==='requests') { loadLeaveStaffOptions(); loadLeaveRequests(); setTabDot('tabdot-leaverq', 0); }
+  if (tab==='requests') { loadLeaveStaffOptions().then(loadLeaveRequests); setTabDot('tabdot-leaverq', 0); }
   if (tab==='calendar') loadLeaveCalendar();
   if (tab==='balance')  loadLeaveBalances();
   if (tab==='types')    loadLeaveTypes();
@@ -5426,38 +5430,82 @@ async function loadLeaveStaffOptions() {
     leaveStaffList = ok?data:[];
   }
   const sel = document.getElementById('leave-req-staff');
-  const cur = sel.value;
+  // 選單還沒建好時 _restoreFilters 設的值會被瀏覽器丟掉 → 從網址補回
+  const cur = sel.value || new URLSearchParams(location.search).get('lr_staff') || '';
+  const opt = s => `<option value="${s.id}" ${String(s.id)===String(cur)?'selected':''}>${escHtml(s.name)}</option>`;
+  const active = leaveStaffList.filter(s => s.active !== false);
+  const left   = leaveStaffList.filter(s => s.active === false);
   sel.innerHTML = '<option value="">全部</option>' +
-    leaveStaffList.map(s=>`<option value="${s.id}" ${s.id==cur?'selected':''}>${escHtml(s.name)}</option>`).join('');
+    `<optgroup label="在職">${active.map(opt).join('')}</optgroup>` +
+    (left.length ? `<optgroup label="離職">${left.map(opt).join('')}</optgroup>` : '');
+}
+
+function _leaveRangeParams(params) {
+  let from = document.getElementById('leave-req-from').value;
+  let to   = document.getElementById('leave-req-to').value;
+  if (from && to && from > to) { [from, to] = [to, from]; }
+  if (from) params.set('from_month', from);
+  if (to)   params.set('to_month',   to);
+  return { from, to };
 }
 
 async function loadLeaveRequests() {
-  const month  = document.getElementById('leave-req-month').value;
   const status = document.getElementById('leave-req-status').value;
   const staffId = document.getElementById('leave-req-staff').value;
-  _persistFilters('leave-req', { lr_month:'leave-req-month', lr_status:'leave-req-status', lr_staff:'leave-req-staff' });
-  let url = '/api/leave/requests?';
-  if (month)  url += `month=${month}&`;
-  if (status) url += `status=${status}&`;
-  if (staffId) url += `staff_id=${staffId}&`;
+  _persistFilters('leave-req', { lr_from:'leave-req-from', lr_to:'leave-req-to', lr_status:'leave-req-status', lr_staff:'leave-req-staff' });
+  const params = new URLSearchParams();
+  const { from } = _leaveRangeParams(params);
+  if (status)  params.set('status', status);
+  if (staffId) params.set('staff_id', staffId);
   const [{ok,data}, balRes] = await Promise.all([
-    api(url, {}, true),
-    _refreshLeaveBalCache(month ? month.slice(0,4) : String(new Date().getFullYear()))
+    api('/api/leave/requests?' + params.toString(), {}, true),
+    _refreshLeaveBalCache(from ? from.slice(0,4) : String(new Date().getFullYear()))
   ]);
   leaveReqData = ok ? data : [];
   document.getElementById('leave-req-count').textContent = `共 ${leaveReqData.length} 筆`;
   renderLeaveRequests();
+  renderLeaveSummary(status);
   updateLeavePendingHint();
+}
+
+// 期間合計：依假別加總天數（狀態選「全部」時不含已退回）
+function renderLeaveSummary(status) {
+  const box = document.getElementById('leave-req-summary');
+  const rows = leaveReqData.filter(r => status || r.status !== 'rejected');
+  if (!rows.length) { box.style.display = 'none'; return; }
+  const byType = {};
+  let total = 0;
+  rows.forEach(r => {
+    const k = r.leave_type_name || '其他';
+    byType[k] = byType[k] || { days: 0, color: r.leave_color || '#4a7bda' };
+    byType[k].days += Number(r.total_days) || 0;
+    total += Number(r.total_days) || 0;
+  });
+  const fmt = n => (Math.round(n * 100) / 100).toString();
+  const { from, to } = _leaveRangeParams(new URLSearchParams());
+  const period = (from || to) ? `${from || '不限'} ～ ${to || '不限'}` : '全部期間';
+  const sel = document.getElementById('leave-req-staff');
+  const who = sel.value ? sel.options[sel.selectedIndex].text : '全體員工';
+  const stLabel = status ? (LEAVE_STATUS_LABEL[status] || status) : '不含已退回';
+  box.innerHTML = `<strong>${escHtml(who)}</strong><span style="color:var(--muted)">${escHtml(period)}（${escHtml(stLabel)}）</span>
+    <span>合計 <strong style="font-size:15px">${fmt(total)}</strong> 天</span>` +
+    Object.entries(byType).sort((a,b)=>b[1].days-a[1].days).map(([name,v]) =>
+      `<span style="padding:1px 8px;border-radius:10px;font-size:12px;background:${v.color}22;color:${v.color}">${escHtml(name)} ${fmt(v.days)} 天</span>`).join('');
+  box.style.display = 'flex';
 }
 
 // 月份篩選會藏住其他月份的待審單（紅點計全部、列表只顯示當月）→ 主動提示
 async function updateLeavePendingHint() {
   const hint = document.getElementById('leave-pending-hint');
-  const month = document.getElementById('leave-req-month').value;
-  if (!month) { hint.style.display = 'none'; return; }
+  const { from, to } = _leaveRangeParams(new URLSearchParams());
+  if (!from && !to) { hint.style.display = 'none'; return; }
+  const month = `${from || '不限'} ～ ${to || '不限'}`;
   const { ok, data } = await api('/api/leave/requests?status=pending', {}, true);
   if (!ok || !Array.isArray(data)) { hint.style.display = 'none'; return; }
-  const hidden = data.filter(r => String(r.start_date || '').slice(0, 7) !== month);
+  const hidden = data.filter(r => {
+    const ym = String(r.start_date || '').slice(0, 7);
+    return (from && ym < from) || (to && ym > to);
+  });
   if (!hidden.length) { hint.style.display = 'none'; return; }
   const preview = hidden.slice(0, 3).map(r => `${r.staff_name} ${r.start_date}`).join('、');
   hint.innerHTML = `⚠ 另有 <strong>${hidden.length}</strong> 筆待審假單不在 ${month}（${escHtml(preview)}${hidden.length > 3 ? '…' : ''}）
@@ -5466,7 +5514,8 @@ async function updateLeavePendingHint() {
 }
 
 function showAllPendingLeave() {
-  document.getElementById('leave-req-month').value = '';
+  document.getElementById('leave-req-from').value = '';
+  document.getElementById('leave-req-to').value = '';
   document.getElementById('leave-req-status').value = 'pending';
   document.getElementById('leave-req-staff').value = '';
   loadLeaveRequests();
@@ -5536,9 +5585,9 @@ async function openLeaveAdminModal(id=null) {
   }
   if (!leaveStaffList.length) {
     const {ok,data} = await api('/api/punch/staff',{},true);
-    leaveStaffList = ok?data.filter(s=>s.active):[];
+    leaveStaffList = ok?data:[];
   }
-  document.getElementById('lam-staff').innerHTML = leaveStaffList.map(s=>`<option value="${s.id}">${escHtml(s.name)}</option>`).join('');
+  document.getElementById('lam-staff').innerHTML = leaveStaffList.filter(s=>s.active).map(s=>`<option value="${s.id}">${escHtml(s.name)}</option>`).join('');
   document.getElementById('lam-type').innerHTML  = leaveTypesList.filter(t=>t.active).map(t=>`<option value="${t.id}">${escHtml(t.name)}</option>`).join('');
   document.getElementById('lam-start-half').checked = false;
   document.getElementById('lam-end-half').checked   = false;
@@ -5667,14 +5716,10 @@ async function saveLeaveAdmin() {
     document.getElementById('lam-cert-section').style.display = '';
     return;
   }
-  if (id) {
-    // Delete and recreate (simplest approach)
-    await api(`/api/leave/requests/${id}`,{method:'DELETE'});
-  }
   const hoursVal = parseFloat(document.getElementById('lam-hours').value);
   const total_hours = !isNaN(hoursVal) && hoursVal > 0 ? hoursVal : undefined;
   if (total_hours !== undefined && (total_hours < 0.5 || total_hours > 8)) { showToast('時數需介於 0.5～8 小時','error'); return; }
-  const {ok} = await api('/api/leave/requests', apiJSON({staff_id:parseInt(staff_id),leave_type_id:parseInt(leave_type_id),start_date,end_date,start_half,end_half,total_hours,reason,status,reviewed_by:'管理員',document_id}));
+  const {ok} = await api('/api/leave/requests', apiJSON({staff_id:parseInt(staff_id),leave_type_id:parseInt(leave_type_id),start_date,end_date,start_half,end_half,total_hours,reason,status,reviewed_by:'管理員',document_id,replace_id:id?parseInt(id):undefined}));
   if (!ok) return;
   closeLeaveAdminModal(); showToast(id?'已更新':'請假記錄已建立','success'); await loadLeaveRequests();
 }
@@ -6762,35 +6807,33 @@ function exportSalaryPdf() {
 }
 
 function exportLeaveRequests() {
-  const month    = document.getElementById('leave-req-month').value;
   const status   = document.getElementById('leave-req-status').value;
   const staffId  = document.getElementById('leave-req-staff').value;
   const params   = new URLSearchParams();
-  if (month)   params.set('month',    month);
+  _leaveRangeParams(params);
   if (status)  params.set('status',   status);
   if (staffId) params.set('staff_id', staffId);
   window.open(`/api/export/leave?${params.toString()}`, '_blank');
 }
 
 function exportLeaveRequestsPdf() {
-  const month    = document.getElementById('leave-req-month').value;
   const status   = document.getElementById('leave-req-status').value;
   const staffId  = document.getElementById('leave-req-staff').value;
   const params   = new URLSearchParams();
-  if (month)   params.set('month',    month);
+  _leaveRangeParams(params);
   if (status)  params.set('status',   status);
   if (staffId) params.set('staff_id', staffId);
   window.open(`/api/export/leave/pdf?${params.toString()}`, '_blank');
 }
 
 function exportLeaveCSV() {
-  const month = document.getElementById('sal-month').value || document.getElementById('leave-req-month').value;
+  const month = document.getElementById('sal-month').value || document.getElementById('leave-req-from').value;
   if (!month) { showToast('請先選擇月份', 'error'); return; }
   window.open(`/api/export/leave?month=${month}`, '_blank');
 }
 
 function exportLeavePdf() {
-  const month = document.getElementById('sal-month').value || document.getElementById('leave-req-month').value;
+  const month = document.getElementById('sal-month').value || document.getElementById('leave-req-from').value;
   if (!month) { showToast('請先選擇月份', 'error'); return; }
   window.open(`/api/export/leave/pdf?month=${month}`, '_blank');
 }
