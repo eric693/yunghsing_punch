@@ -625,6 +625,20 @@ def api_leave_submit():
         try:   total_hours_req = float(total_hours_req)
         except: total_hours_req = None
 
+    # 有填起訖時間就以伺服器重算為準（扣午休），不信任前端送來的時數
+    import re as _re_t
+    _t_pat = r'^([01]\d|2[0-3]):[0-5]\d$'
+    lv_start = (b.get('leave_start_time') or '').strip()
+    lv_end   = (b.get('leave_end_time') or '').strip()
+    if lv_start and lv_end:
+        if not (_re_t.match(_t_pat, lv_start) and _re_t.match(_t_pat, lv_end)):
+            return jsonify({'error': '時間格式須為 HH:MM'}), 400
+        total_hours_req = calc_leave_hours(lv_start, lv_end)
+        if total_hours_req <= 0:
+            return jsonify({'error': '此時段都在午休時間，不需請假'}), 400
+    else:
+        lv_start = lv_end = None
+
     if total_hours_req:
         if total_hours_req <= 0 or total_hours_req > 24:
             return jsonify({'error': '請假時數不合理（需介於 0～24 小時）'}), 400
@@ -632,6 +646,7 @@ def api_leave_submit():
         end_date = start_date; start_half = False; end_half = False
     else:
         total_hours_req = None
+        lv_start = lv_end = None
         total_days = _calc_leave_days(start_date, end_date, start_half, end_half)
         if total_days <= 0:
             return jsonify({'error': '請假天數不合理，請檢查日期'}), 400
@@ -675,10 +690,12 @@ def api_leave_submit():
         row = conn.execute("""
             INSERT INTO leave_requests
               (staff_id, leave_type_id, start_date, end_date, start_half, end_half,
-               total_days, total_hours, reason, substitute_name, document_id)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
+               total_days, total_hours, reason, substitute_name, document_id,
+               leave_start_time, leave_end_time)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
         """, (sid, leave_type_id, start_date, end_date, start_half, end_half,
-              total_days, total_hours_req, reason, substitute, document_id)).fetchone()
+              total_days, total_hours_req, reason, substitute, document_id,
+              lv_start, lv_end)).fetchone()
     return jsonify(leave_req_row(row)), 201
 
 

@@ -431,6 +431,24 @@ def api_punch_staff_list():
     return jsonify(result)
 
 
+@bp.route('/api/punch/staff/<int:sid>/reset-password', methods=['POST'])
+@require_module('punch')
+def api_punch_staff_reset_password(sid):
+    """產生新密碼並回傳一次給管理員轉交；資料庫只存雜湊，無法事後再查。"""
+    import secrets, string
+    alphabet = string.ascii_lowercase + string.digits
+    # 去掉容易看錯的字元（0/o、1/l），員工要用唸的或手抄
+    alphabet = ''.join(ch for ch in alphabet if ch not in '0o1l')
+    new_pw = ''.join(secrets.choice(alphabet) for _ in range(10))
+    with get_db() as conn:
+        staff = conn.execute("SELECT id, name, username FROM punch_staff WHERE id=%s", (sid,)).fetchone()
+        if not staff:
+            return jsonify({'error': '找不到員工'}), 404
+        conn.execute("UPDATE punch_staff SET password_hash=%s WHERE id=%s",
+                     (hash_password(new_pw), sid))
+    return jsonify({'name': staff['name'], 'username': staff['username'], 'password': new_pw})
+
+
 @bp.route('/api/punch/staff/reorder', methods=['POST'])
 @require_module('punch')
 def api_punch_staff_reorder():

@@ -384,11 +384,13 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
               <input class="fi" type="date" id="leave-hour-date" style="margin-bottom:0">
             </div>
             <div style="margin-bottom:10px">
-              <div class="fl">請假時數 *</div>
+              <div class="fl">請假時段 *</div>
               <div style="display:flex;align-items:center;gap:8px">
-                <input class="fi" type="number" id="leave-hour-count" min="0.5" max="8" step="0.5" placeholder="例：2" style="margin-bottom:0;width:100px">
-                <span style="font-size:13px;color:var(--muted)">小時（0.5～8）</span>
+                <input class="fi" type="time" id="leave-hour-start" style="margin-bottom:0;flex:1" onchange="previewLeaveHours()">
+                <span style="font-size:13px;color:var(--muted)">～</span>
+                <input class="fi" type="time" id="leave-hour-end" style="margin-bottom:0;flex:1" onchange="previewLeaveHours()">
               </div>
+              <div id="leave-hour-preview" style="font-size:13px;font-weight:700;color:var(--accent);margin-top:6px;min-height:18px"></div>
             </div>
           </div>
           <div id="leave-balance-info" style="font-size:12px;color:var(--muted);padding:8px 10px;background:var(--bg);border-radius:6px;margin-bottom:6px;min-height:32px"></div>
@@ -1899,6 +1901,44 @@ function _onLeaveTypeChange() {
   }
 }
 
+// 午休時段由後台設定，請假時數要扣掉重疊的部分（例：11:00–17:00 午休 1 小時 → 5 小時）
+let _breakWin = { start: '12:00', end: '13:00' };
+async function _loadBreakWindow() {
+  try {
+    const r = await fetch('/api/punch/settings');
+    if (!r.ok) return;
+    const d = await r.json();
+    _breakWin = { start: d.break_start_time || '12:00', end: d.break_end_time || '13:00' };
+  } catch (e) { /* 用預設值 */ }
+}
+
+function _mins(hhmm) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm || '');
+  return m ? (+m[1]) * 60 + (+m[2]) : null;
+}
+
+function calcLeaveHours(startStr, endStr) {
+  const s = _mins(startStr), e0 = _mins(endStr);
+  if (s === null || e0 === null) return null;
+  const e = e0 <= s ? e0 + 1440 : e0;
+  const bs = _mins(_breakWin.start), be = _mins(_breakWin.end);
+  const overlap = Math.max(0, Math.min(e, be) - Math.max(s, bs));
+  return Math.round(Math.max(0, e - s - overlap) / 60 * 100) / 100;
+}
+
+function previewLeaveHours() {
+  const el = document.getElementById('leave-hour-preview');
+  if (!el) return;
+  const s = document.getElementById('leave-hour-start').value;
+  const e = document.getElementById('leave-hour-end').value;
+  if (!s || !e) { el.textContent = ''; return; }
+  const h = calcLeaveHours(s, e);
+  const raw = (_mins(e) > _mins(s)) ? (_mins(e) - _mins(s)) / 60 : null;
+  if (h === 0) { el.textContent = '此時段都在午休時間，不需請假'; return; }
+  el.textContent = `請假時數：${h} 小時` +
+    (raw !== null && Math.abs(raw - h) > 0.01 ? `（已扣午休 ${_breakWin.start}–${_breakWin.end}）` : '');
+}
+
 function _onLeaveUnitChange() {
   const isHour = document.getElementById('leave-unit-hour').checked;
   document.getElementById('leave-dates-section').style.display = isHour ? 'none' : '';
@@ -1908,6 +1948,7 @@ function _onLeaveUnitChange() {
     const today = new Date().toISOString().slice(0, 10);
     if (!document.getElementById('leave-hour-date').value)
       document.getElementById('leave-hour-date').value = today;
+    _loadBreakWindow().then(previewLeaveHours);
   }
 }
 
@@ -1927,10 +1968,14 @@ async function submitLeaveRequest() {
   let payload;
   if (isHourMode) {
     const hour_date  = document.getElementById('leave-hour-date').value;
-    const hour_count = parseFloat(document.getElementById('leave-hour-count').value);
+    const t1 = document.getElementById('leave-hour-start').value;
+    const t2 = document.getElementById('leave-hour-end').value;
     if (!hour_date) { showToast('請選擇請假日期', 'err'); return; }
-    if (!hour_count || hour_count <= 0 || hour_count > 8) { showToast('請填寫正確時數（0.5～8 小時）', 'err'); return; }
-    payload = { leave_type_id: parseInt(leave_type_id), start_date: hour_date, end_date: hour_date, total_hours: hour_count, reason, substitute_name: substitute, document_id: _leaveCertDocId };
+    if (!t1 || !t2) { showToast('請選擇請假的開始與結束時間', 'err'); return; }
+    const hour_count = calcLeaveHours(t1, t2);
+    if (!hour_count || hour_count <= 0) { showToast('此時段都在午休時間，不需請假', 'err'); return; }
+    if (hour_count > 8) { showToast('時段請假最多 8 小時，整天請改用天數請假', 'err'); return; }
+    payload = { leave_type_id: parseInt(leave_type_id), start_date: hour_date, end_date: hour_date, total_hours: hour_count, leave_start_time: t1, leave_end_time: t2, reason, substitute_name: substitute, document_id: _leaveCertDocId };
   } else {
     const start_date = document.getElementById('leave-start').value;
     const end_date   = document.getElementById('leave-end').value;

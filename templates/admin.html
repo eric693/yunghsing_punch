@@ -2206,6 +2206,27 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
   </div>
 </div>
 
+<!-- Reset Password Result Modal -->
+<div class="modal-overlay" id="reset-pw-modal" style="display:none">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header"><span class="modal-title">新密碼已產生</span><button class="modal-close" onclick="document.getElementById('reset-pw-modal').style.display='none'">&times;</button></div>
+    <div class="modal-body">
+      <div style="font-size:13px;margin-bottom:10px" id="rpm-name"></div>
+      <div style="padding:14px;background:var(--bg);border:1.5px dashed var(--border);border-radius:8px;text-align:center">
+        <div style="font-family:'DM Mono',monospace;font-size:24px;font-weight:700;letter-spacing:2px;user-select:all" id="rpm-pw"></div>
+      </div>
+      <div style="margin-top:12px;padding:10px;background:#fffbeb;border-radius:6px;font-size:12px;color:#9a5b14">
+        這組密碼只顯示這一次，關掉視窗就查不到了（系統只保存加密後的結果，無法還原）。<br>
+        請現在複製給員工，並提醒他登入後自行更改。
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="document.getElementById('reset-pw-modal').style.display='none'">關閉</button>
+      <button class="btn btn-primary" onclick="copyResetPassword()">複製密碼</button>
+    </div>
+  </div>
+</div>
+
 <!-- Punch Staff Modal -->
 <div class="modal-overlay" id="punch-staff-modal" style="display:none">
   <div class="modal" style="max-width:480px">
@@ -10184,11 +10205,38 @@ function renderPunchStaff() {
     <td>${s.active ? '<span class="badge badge-ok">在職</span>' : '<span class="badge badge-warn">停用</span>'}</td>
     <td style="white-space:nowrap">
       <button class="btn btn-outline btn-sm" onclick="openPunchStaffModal(${s.id})">編輯</button>
+      <button class="btn btn-ghost btn-sm" style="margin-left:4px" onclick="resetStaffPassword(${s.id},'${escHtml(s.name)}')" title="產生新密碼（系統不保存明碼，只顯示這一次）">重設密碼</button>
       <button class="btn btn-ghost btn-sm" style="margin-left:4px" onclick="openTerminateModal(${s.id},'${escHtml(s.name)}')" title="辦理離職">離職</button>
       <button class="btn btn-danger btn-sm" onclick="deletePunchStaff(${s.id})" style="margin-left:4px">刪除</button>
     </td>
   </tr>`;
   }).join('');
+}
+
+// 密碼是單向雜湊，無法顯示原本的密碼 → 只能產生新的，且只在這裡顯示一次
+async function resetStaffPassword(id, name) {
+  if (!confirm(`要重設 ${name} 的密碼嗎？\n\n系統會產生一組新密碼，舊密碼立刻失效。\n新密碼只會顯示這一次，請當場複製給員工。`)) return;
+  const { ok, data } = await api(`/api/punch/staff/${id}/reset-password`, { method: 'POST' });
+  if (!ok) return;
+  document.getElementById('rpm-name').textContent = `${data.name}（帳號 ${data.username}）`;
+  document.getElementById('rpm-pw').textContent   = data.password;
+  document.getElementById('reset-pw-modal').style.display = 'flex';
+}
+
+function copyResetPassword() {
+  const pw = document.getElementById('rpm-pw').textContent;
+  const done = () => showToast('新密碼已複製', 'success');
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(pw).then(done, () => fallbackCopy(pw, done));
+  } else { fallbackCopy(pw, done); }
+}
+
+function fallbackCopy(text, done) {
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); done(); } catch (e) { showToast('請手動複製', 'error'); }
+  document.body.removeChild(ta);
 }
 
 // ── 打卡管理 → 離職員工 ──────────────────────────────────────
