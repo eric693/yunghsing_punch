@@ -231,6 +231,40 @@ def _calc_annual_leave_schedule(hire_date_str):
     return result
 
 
+def _break_window(conn=None):
+    """午休時段（分鐘），預設 12:00–13:00"""
+    def _m(v, dflt):
+        try:
+            h, mi = str(v).split(':'); return int(h) * 60 + int(mi)
+        except Exception:
+            return dflt
+    try:
+        if conn is not None:
+            cfg = conn.execute("SELECT break_start_time, break_end_time FROM punch_config WHERE id=1").fetchone()
+        else:
+            with get_db() as c:
+                cfg = c.execute("SELECT break_start_time, break_end_time FROM punch_config WHERE id=1").fetchone()
+    except Exception:
+        cfg = None
+    return (_m(cfg and cfg.get('break_start_time'), 12 * 60),
+            _m(cfg and cfg.get('break_end_time'), 13 * 60))
+
+
+def calc_leave_hours(start_hhmm, end_hhmm, conn=None):
+    """請假時數＝起訖區間扣掉重疊的午休（例：11:00–17:00 扣 12–13 → 5 小時）"""
+    try:
+        sh, sm = map(int, str(start_hhmm).split(':'))
+        eh, em = map(int, str(end_hhmm).split(':'))
+    except Exception:
+        return 0.0
+    s = sh * 60 + sm; e = eh * 60 + em
+    if e <= s:
+        e += 24 * 60
+    bs, be = _break_window(conn)
+    overlap = max(0, min(e, be) - max(s, bs))
+    return round(max(0.0, (e - s - overlap)) / 60, 2)
+
+
 def _calc_leave_days(start_date_str, end_date_str, start_half=False, end_half=False):
     """只計工作日（週一～五、排除國定假日），與薪資計算的工作日定義一致"""
     from datetime import date as _date, timedelta as _td
@@ -428,18 +462,25 @@ def api_leave_request_admin_create():
         """, (sid, end_date, start_date, total_hours_req is None, replace_id or 0)).fetchone()
         if overlap:
             return jsonify({'error': f"該期間與現有假單（{overlap['start_date']}～{overlap['end_date']}，待審或已核准）重疊"}), 409
+        # 編輯時數假時，若時數沒變就保留原本的起訖時間（表單上沒有這兩個欄位）
+        keep_start_time = keep_end_time = None
+        if total_hours_req and old and old['leave_start_time'] and old['leave_end_time'] \
+                and float(old['total_hours'] or 0) == float(total_hours_req):
+            keep_start_time, keep_end_time = old['leave_start_time'], old['leave_end_time']
         if old:
             _remove_leave_request(conn, old)
         row = conn.execute("""
             INSERT INTO leave_requests
               (staff_id, leave_type_id, start_date, end_date, start_half, end_half,
-               total_days, total_hours, reason, status, reviewed_by, reviewed_at, document_id)
+               total_days, total_hours, reason, status, reviewed_by, reviewed_at, document_id,
+               leave_start_time, leave_end_time)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-              CASE WHEN %s='approved' THEN NOW() ELSE NULL END, %s)
+              CASE WHEN %s='approved' THEN NOW() ELSE NULL END, %s, %s, %s)
             RETURNING *
         """, (sid, leave_type_id, start_date, end_date, start_half, end_half,
               total_days, total_hours_req, reason, status,
-              b.get('reviewed_by', '管理員'), status, document_id)).fetchone()
+              b.get('reviewed_by', '管理員'), status, document_id,
+              keep_start_time, keep_end_time)).fetchone()
         if status == 'approved':
             _update_leave_balance(conn, sid, leave_type_id, start_date[:4], total_days)
     return jsonify(leave_req_row(row)), 201

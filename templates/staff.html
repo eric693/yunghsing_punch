@@ -1992,7 +1992,7 @@ function renderMyLeaveList() {
           <span style="padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;background:${r.leave_color||'#4a7bda'}22;color:${r.leave_color||'#4a7bda'}">${esc(r.leave_type_name)}</span>
           <span style="font-size:11px;color:var(--muted);margin-left:8px">${payLabel}</span>
           <div style="font-size:12px;margin-top:4px;font-weight:600">
-            ${r.start_date}${sh}${r.total_hours ? '' : ` ～ ${r.end_date}${eh}`}
+            ${r.start_date}${sh}${r.total_hours ? '' : ` ～ ${r.end_date}${eh}`}${(r.leave_start_time && r.leave_end_time) ? ` ${String(r.leave_start_time).slice(0,5)}～${String(r.leave_end_time).slice(0,5)}` : ''}
             <span style="font-weight:400;color:var(--muted);margin-left:6px">${r.total_hours ? `${r.total_hours} 小時` : `${r.total_days} 天`}</span>
           </div>
         </div>

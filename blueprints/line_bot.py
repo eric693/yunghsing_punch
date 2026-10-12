@@ -607,13 +607,19 @@ def _line_submit_leave(staff, user_id, text):
         date_str = parts[2]
         start_str = parts[3]
         sh, sm = map(int, start_str.split(':'))
+        # 標示實際計算時數（已扣午休），避免員工以為 11:00–17:00 是 6 小時
+        from blueprints.leave import calc_leave_hours
         end_options = []
         for delta_h in [1, 1.5, 2, 2.5, 3, 4, 6, 8]:
             total_m = sh * 60 + sm + int(delta_h * 60)
             eh, em = (total_m // 60) % 24, total_m % 60
-            end_options.append((f'{eh:02d}:{em:02d}', delta_h))
+            t = f'{eh:02d}:{em:02d}'
+            net = calc_leave_hours(start_str, t)
+            # 跨午休時多個結束時間會算出同樣時數（12:00/12:30/13:00 都是 1h）→ 只留最早那個
+            if net > 0 and net not in [n for _, n in end_options]:
+                end_options.append((t, net))
         items_end = [
-            {'label': f'至 {t}（{d}h）', 'text': f'請假 {leave_type_name} {date_str} {start_str} {t}'}
+            {'label': f'至 {t}（{d:g}h）', 'text': f'請假 {leave_type_name} {date_str} {start_str} {t}'}
             for t, d in end_options
         ]
         _send_line_with_quick_reply(user_id,
@@ -681,12 +687,11 @@ def _line_submit_leave(staff, user_id, text):
         total_hours_val = None
         if leave_start_time and leave_end_time:
             daily_hours = float(staff.get('daily_hours') or 8)
-            sh, sm = map(int, leave_start_time.split(':'))
-            eh, em = map(int, leave_end_time.split(':'))
-            leave_minutes = (eh * 60 + em) - (sh * 60 + sm)
-            if leave_minutes <= 0:
-                leave_minutes += 24 * 60
-            total_hours_val = round(leave_minutes / 60, 2)
+            from blueprints.leave import calc_leave_hours
+            total_hours_val = calc_leave_hours(leave_start_time, leave_end_time, conn)
+            if total_hours_val <= 0:
+                _send_line_punch(user_id, '請假時段全部落在午休時間，不需請假。')
+                return
             days = round(total_hours_val / daily_hours, 2)
         else:
             # 與後台/薪資同一套工作日定義（週一～五、排除國定假日），否則後台編輯重算會變
@@ -717,6 +722,9 @@ def _line_submit_leave(staff, user_id, text):
 
     if leave_start_time and leave_end_time:
         period_label = f'（{leave_start_time} ～ {leave_end_time}）'
+        _raw = (int(leave_end_time[:2]) * 60 + int(leave_end_time[3:])) - (int(leave_start_time[:2]) * 60 + int(leave_start_time[3:]))
+        if _raw > 0 and abs(_raw / 60 - (total_hours_val or 0)) > 0.01:
+            period_label += '（已扣午休）'
     elif end_half and not start_half and date_str1 == date_str2:
         period_label = '（上午半天）'
     elif start_half and not end_half and date_str1 == date_str2:

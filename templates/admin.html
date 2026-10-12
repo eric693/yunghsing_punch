@@ -704,6 +704,10 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <input type="time" id="fixed-work-start" class="filter-input" style="width:105px" onchange="saveWorkTimeConfig()">
         <span style="color:var(--muted)">–</span>
         <input type="time" id="fixed-work-end" class="filter-input" style="width:105px" onchange="saveWorkTimeConfig()">
+        <span class="filter-label" title="時段請假會自動扣掉與午休重疊的時間">午休</span>
+        <input type="time" id="break-start" class="filter-input" style="width:105px" onchange="saveWorkTimeConfig()">
+        <span style="color:var(--muted)">–</span>
+        <input type="time" id="break-end" class="filter-input" style="width:105px" onchange="saveWorkTimeConfig()">
         <button class="btn btn-primary btn-sm" onclick="batchFixAnomalies()" id="anomaly-batchfix-btn" disabled>批次補登</button>
         <span style="flex:1"></span>
         <span class="filter-label">月份</span>
@@ -4062,15 +4066,20 @@ async function loadWorkTimeConfig() {
   if (!ok) return;
   document.getElementById('fixed-work-start').value = data.work_start_time || '08:00';
   document.getElementById('fixed-work-end').value   = data.work_end_time   || '17:00';
+  document.getElementById('break-start').value      = data.break_start_time || '12:00';
+  document.getElementById('break-end').value        = data.break_end_time   || '13:00';
 }
 
 async function saveWorkTimeConfig() {
   const ws = document.getElementById('fixed-work-start').value;
   const we = document.getElementById('fixed-work-end').value;
-  if (!ws || !we) return;
-  const { ok, data } = await api('/api/punch/config', apiPUT({ work_start_time: ws, work_end_time: we }));
+  const bs = document.getElementById('break-start').value;
+  const be = document.getElementById('break-end').value;
+  if (!ws || !we || !bs || !be) return;
+  const { ok, data } = await api('/api/punch/config', apiPUT({ work_start_time: ws, work_end_time: we,
+                                                              break_start_time: bs, break_end_time: be }));
   if (!ok) { showToast((data && data.error) || '儲存失敗', true); return; }
-  showToast(`固定上下班時間已更新：${ws}–${we}`, 'success');
+  showToast(`工時設定已更新：上下班 ${ws}–${we}、午休 ${bs}–${be}`, 'success');
 }
 
 async function loadPunchAnomalies() {
@@ -5535,6 +5544,12 @@ async function _refreshLeaveBalCache(year) {
   });
 }
 
+// 時段假顯示「11:00～17:00」，只看幾小時無法判斷員工是不是選錯時間
+function leaveTimeRange(r) {
+  const s = (r.leave_start_time || '').slice(0,5), e = (r.leave_end_time || '').slice(0,5);
+  return (s && e) ? ` <span style="font-weight:600">${s}～${e}</span>` : '';
+}
+
 function renderLeaveRequests() {
   const wrap = document.getElementById('leave-req-list');
   if (!leaveReqData.length) { wrap.innerHTML='<div class="card" style="padding:40px;text-align:center;color:var(--muted)">無符合申請</div>'; return; }
@@ -5560,7 +5575,7 @@ function renderLeaveRequests() {
             return `<span style="margin-left:6px;padding:1px 7px;border-radius:10px;font-size:11px;background:#f0f2f8;color:var(--muted)">餘額 ${bal.remain.toFixed(1)} 天</span>`;
           })()}
           <div style="font-size:12px;color:var(--muted);margin-top:3px">
-            ${r.start_date}${sHalf}${r.total_hours ? '' : ` ~ ${r.end_date}${eHalf}`}
+            ${r.start_date}${sHalf}${r.total_hours ? '' : ` ~ ${r.end_date}${eHalf}`}${leaveTimeRange(r)}
             &nbsp;|&nbsp; <strong>${r.total_hours ? r.total_hours + ' 小時' : r.total_days + ' 天'}</strong>
             &nbsp;|&nbsp; 薪資倍率：${r.pay_rate===1?'全薪':r.pay_rate===0?'無薪':r.pay_rate+'倍'}
           </div>
@@ -5746,7 +5761,7 @@ function openLeaveReview(id) {
   document.getElementById('lrm-info').innerHTML = `
     <strong>${escHtml(r.staff_name)}</strong>
     <span style="margin-left:8px;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:${r.leave_color||'#4a7bda'}22;color:${r.leave_color||'#4a7bda'}">${escHtml(r.leave_type_name)}</span><br>
-    ${r.start_date}${sh}${r.total_hours ? '' : ` ~ ${r.end_date}${eh}`}　<strong>${r.total_hours ? r.total_hours + ' 小時' : r.total_days + ' 天'}</strong><br>
+    ${r.start_date}${sh}${r.total_hours ? '' : ` ~ ${r.end_date}${eh}`}${leaveTimeRange(r)}　<strong>${r.total_hours ? r.total_hours + ' 小時' : r.total_days + ' 天'}</strong><br>
     <span style="color:var(--muted)">${escHtml(r.reason||'（無說明）')}</span>${balHtml}`;
   const certSec  = document.getElementById('lrm-cert-section');
   const certLink = document.getElementById('lrm-cert-link');

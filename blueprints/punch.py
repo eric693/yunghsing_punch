@@ -196,6 +196,8 @@ def api_punch_settings_get():
         'gps_required': cfg['gps_required'] if cfg else False,
         'work_start_time': (cfg['work_start_time'] if cfg else None) or '08:00',
         'work_end_time':   (cfg['work_end_time']   if cfg else None) or '17:00',
+        'break_start_time': (cfg['break_start_time'] if cfg else None) or '12:00',
+        'break_end_time':   (cfg['break_end_time']   if cfg else None) or '13:00',
         'locations': [loc_row(r) for r in locs]
     })
 
@@ -208,7 +210,7 @@ def api_punch_config_update():
     sets, params = [], []
     if 'gps_required' in b:
         sets.append("gps_required=%s"); params.append(bool(b['gps_required']))
-    for key in ('work_start_time', 'work_end_time'):
+    for key in ('work_start_time', 'work_end_time', 'break_start_time', 'break_end_time'):
         if key in b:
             val = str(b[key] or '').strip()
             if not _re.fullmatch(r'([01]\d|2[0-3]):[0-5]\d', val):
@@ -223,7 +225,9 @@ def api_punch_config_update():
         ).fetchone()
     return jsonify({'gps_required': row['gps_required'],
                     'work_start_time': row['work_start_time'],
-                    'work_end_time': row['work_end_time']})
+                    'work_end_time': row['work_end_time'],
+                    'break_start_time': row['break_start_time'],
+                    'break_end_time': row['break_end_time']})
 
 
 @bp.route('/api/punch/locations', methods=['GET'])
